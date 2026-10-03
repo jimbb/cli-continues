@@ -60,6 +60,45 @@ describe('codex parser hardening', () => {
     expect(session?.summary).toBe('detach the worker from the web app');
   });
 
+  it('skips continues handoff prompts when picking the summary', async () => {
+    const home = makeCodexHome();
+    const userItem = (text: string) => ({
+      timestamp: '2026-10-03T00:00:01.000Z',
+      type: 'response_item',
+      payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] },
+    });
+    const handoff =
+      'Continuing a coding session from claude. Read the file .continues-handoff-abc.md in the current directory for full context and continue where it left off.';
+    const meta = (id: string) => ({
+      timestamp: '2026-10-03T00:00:00.000Z',
+      type: 'session_meta',
+      payload: { id, cwd: '/tmp/p' },
+    });
+    const dir = path.join('sessions', '2026', '10', '03');
+    // Real handoff sessions: the agent's first run fills hundreds of lines before the next prompt
+    const agentRun = Array.from({ length: 200 }, () => ({
+      timestamp: '2026-10-03T00:00:02.000Z',
+      type: 'event_msg',
+      payload: { type: 'agent_message', message: 'reading the handoff file' },
+    }));
+    writeRollout(home, dir, 'rollout-2026-10-03T00-00-00-followed-id.jsonl', [
+      meta('followed-id'),
+      userItem(handoff),
+      ...agentRun,
+      userItem('commit and merge to master'),
+    ]);
+    writeRollout(home, dir, 'rollout-2026-10-03T00-00-01-only-handoff-id.jsonl', [
+      meta('only-handoff-id'),
+      userItem(handoff),
+    ]);
+
+    const { parseCodexSessions } = await loadCodexParser(home);
+    const summaries = new Map((await parseCodexSessions()).map((s) => [s.id, s.summary]));
+
+    expect(summaries.get('followed-id')).toBe('commit and merge to master');
+    expect(summaries.get('only-handoff-id')).toMatch(/^Continuing a coding session from claude/);
+  });
+
   it('discovers sessions from both active and archived session trees', async () => {
     const home = makeCodexHome();
 

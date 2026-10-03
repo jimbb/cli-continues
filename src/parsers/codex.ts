@@ -13,7 +13,7 @@ import type {
   UnifiedSession,
 } from '../types/index.js';
 import type { CodexMessage, CodexSessionMeta } from '../types/schemas.js';
-import { isSystemContent } from '../utils/content.js';
+import { isHandoffPrompt, isSystemContent } from '../utils/content.js';
 import { countDiffStats, extractStdoutTail } from '../utils/diff.js';
 import { findFiles, mapConcurrent } from '../utils/fs-helpers.js';
 import { getFileStats, readJsonlFile, scanJsonlFile, scanJsonlHead } from '../utils/jsonl.js';
@@ -58,53 +58,59 @@ async function parseSessionInfo(filePath: string): Promise<{
 }> {
   let meta: CodexSessionMeta | null = null;
   let firstUserMessage = '';
+  // A continues handoff prompt, used only when no real message follows it
+  let handoffPrompt = '';
+  const take = (text: string): void => {
+    if (!isHandoffPrompt(text)) firstUserMessage = text;
+    else if (!handoffPrompt) handoffPrompt = text;
+  };
 
-  await scanJsonlHead(
-    filePath,
-    150,
-    (parsed) => {
-      const msg = parsed as Record<string, unknown>;
+  const visitor = (parsed: unknown): 'continue' | 'stop' => {
+    const msg = parsed as Record<string, unknown>;
 
-      if (msg.type === 'session_meta' && !meta) {
-        meta = msg as unknown as CodexSessionMeta;
+    if (msg.type === 'session_meta' && !meta) {
+      meta = msg as unknown as CodexSessionMeta;
+    }
+
+    if (!firstUserMessage && msg.type === 'event_msg') {
+      const payload = msg.payload as Record<string, unknown> | undefined;
+      if (payload?.type === 'user_message') {
+        take((payload.message as string) || '');
       }
+    }
 
-      if (!firstUserMessage && msg.type === 'event_msg') {
-        const payload = msg.payload as Record<string, unknown> | undefined;
-        if (payload?.type === 'user_message') {
-          firstUserMessage = (payload.message as string) || '';
-        }
+    if (!firstUserMessage && msg.type === 'message' && (msg as Record<string, unknown>).role === 'user') {
+      take(typeof msg.content === 'string' ? (msg.content as string) : '');
+    }
+
+    // Newer Codex no longer writes user_message events; the prompt only lives in response_item
+    if (!firstUserMessage && msg.type === 'response_item') {
+      const payload = msg.payload as {
+        type?: string;
+        role?: string;
+        content?: Array<{ type?: string; text?: string }>;
+      };
+      if (payload?.type === 'message' && payload.role === 'user') {
+        const text = (payload.content || [])
+          .filter((c) => c.type === 'input_text' && c.text)
+          .map((c) => c.text)
+          .join('\n');
+        if (!isSystemContent(text)) take(text);
       }
+    }
 
-      if (!firstUserMessage && msg.type === 'message' && (msg as Record<string, unknown>).role === 'user') {
-        firstUserMessage = typeof msg.content === 'string' ? (msg.content as string) : '';
-      }
+    if (meta && firstUserMessage) {
+      return 'stop';
+    }
+    return 'continue';
+  };
 
-      // Newer Codex no longer writes user_message events; the prompt only lives in response_item
-      if (!firstUserMessage && msg.type === 'response_item') {
-        const payload = msg.payload as {
-          type?: string;
-          role?: string;
-          content?: Array<{ type?: string; text?: string }>;
-        };
-        if (payload?.type === 'message' && payload.role === 'user') {
-          const text = (payload.content || [])
-            .filter((c) => c.type === 'input_text' && c.text)
-            .map((c) => c.text)
-            .join('\n');
-          if (!isSystemContent(text)) firstUserMessage = text;
-        }
-      }
+  await scanJsonlHead(filePath, 150, visitor, { maxBytes: MAX_METADATA_SCAN_BYTES });
+  // After a handoff the agent's first run can fill thousands of lines before the next
+  // prompt; only these sessions pay for a full-file scan.
+  if (!firstUserMessage && handoffPrompt) await scanJsonlFile(filePath, visitor);
 
-      if (meta && firstUserMessage) {
-        return 'stop';
-      }
-      return 'continue';
-    },
-    { maxBytes: MAX_METADATA_SCAN_BYTES },
-  );
-
-  return { meta, firstUserMessage };
+  return { meta, firstUserMessage: firstUserMessage || handoffPrompt };
 }
 
 /**

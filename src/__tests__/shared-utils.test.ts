@@ -367,6 +367,16 @@ describe('isRealUserMessage', () => {
     expect(isRealUserMessage('Session Handoff from Claude')).toBe(false);
   });
 
+  it('rejects the Windows one-line handoff prompt and interruption markers', () => {
+    expect(
+      isRealUserMessage(
+        'Continuing a coding session from codex. Read the file .continues-handoff-abc.md in the current directory for full context and continue where it left off.',
+      ),
+    ).toBe(false);
+    expect(isRealUserMessage('[Request interrupted by user]')).toBe(false);
+    expect(isRealUserMessage('Continuing a coding session from scratch is fine')).toBe(true);
+  });
+
   it('rejects empty text', () => {
     expect(isRealUserMessage('')).toBe(false);
   });

@@ -13,7 +13,7 @@ import type {
   UnifiedSession,
 } from '../types/index.js';
 import type { ClaudeMessage } from '../types/schemas.js';
-import { extractTextFromBlocks, isRealUserMessage } from '../utils/content.js';
+import { extractTextFromBlocks, isHandoffPrompt, isRealUserMessage } from '../utils/content.js';
 import { findFiles, mapConcurrent } from '../utils/fs-helpers.js';
 import { getFileStats, readJsonlFile, scanJsonlFile, scanJsonlHead } from '../utils/jsonl.js';
 import { generateHandoffMarkdown, safePath } from '../utils/markdown.js';
@@ -87,6 +87,8 @@ async function parseSessionInfo(
   let cwd = '';
   let gitBranch = '';
   let firstUserMessage = '';
+  // A continues handoff prompt, used only when no real message follows it
+  let handoffPrompt = '';
   let firstTimestamp = '';
   let lastTimestamp = '';
   let firstTimeMs = Number.POSITIVE_INFINITY;
@@ -117,6 +119,8 @@ async function parseSessionInfo(
       const content = stripClaudeLocalCommandMarkup(extractTextFromBlocks(msg.message.content));
       if (isRealUserMessage(content)) {
         firstUserMessage = content;
+      } else if (!handoffPrompt && isHandoffPrompt(content)) {
+        handoffPrompt = content;
       }
     }
     if (options.lightweight && sessionId && cwd && firstUserMessage) return 'stop';
@@ -133,7 +137,14 @@ async function parseSessionInfo(
     sessionId = path.basename(filePath, '.jsonl');
   }
 
-  return { sessionId, cwd, gitBranch, firstUserMessage, firstTimestamp, lastTimestamp };
+  return {
+    sessionId,
+    cwd,
+    gitBranch,
+    firstUserMessage: firstUserMessage || handoffPrompt,
+    firstTimestamp,
+    lastTimestamp,
+  };
 }
 
 /**
