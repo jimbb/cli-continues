@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.3.0] - 2026-10-03
+
+### Added
+
+- **Native resume from the picker** — the session's own tool is listed first
+  as "(native resume)". Choosing it runs the tool's resume command (for
+  example `claude --resume <id>`) in the session's directory instead of
+  writing a handoff.
+
+### Changed
+
+- Session summaries in the picker use the terminal's width (up to the 50
+  characters stored in the index, at least 16) instead of a fixed 16, and
+  count CJK characters as two columns so rows do not wrap.
+- The GitHub star prompt and banner point at the maintained fork,
+  `jimbb/cli-continues`.
+- `continues resume <id>` no longer offers "Back to session selection",
+  since it has no session list to return to.
+
+### Fixed
+
+- Sessions started by a continues handoff are summarised by the first real
+  message after the handoff instead of "Continuing a coding session from …".
+  Interruption markers are skipped, Codex sessions are scanned past the
+  agent's first run when needed, and the handoff text is kept only when no
+  message follows it.
+
 ## [4.2.0] - 2026-10-03
 
 This fork is maintained independently from the original upstream repository.
