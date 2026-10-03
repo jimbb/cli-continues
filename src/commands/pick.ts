@@ -9,7 +9,7 @@ import type { HandoffForwardingOptions } from '../utils/forward-flags.js';
 import { getAllSessions, getSessionsByCwd, getSessionsBySource } from '../utils/index.js';
 import { getResumeCommand, nativeResume, resolveCrossToolForwarding, resume } from '../utils/resume.js';
 import { matchesCwd } from '../utils/slug.js';
-import { checkSingleToolAutoResume, selectTargetTool, showForwardingWarnings } from './_shared.js';
+import { checkSingleToolAutoResume, selectTargetTool, selectWithBack, showForwardingWarnings } from './_shared.js';
 
 /**
  * Main interactive TUI command
@@ -127,11 +127,11 @@ export async function interactivePick(
       return;
     }
 
-    // Step 1: Filter by CLI tool (optional) -- skip if source already specified
-    let filteredSessions = hasCwdSessions ? cwdSessions : sessions;
-
-    if (!options.source && sessions.length > 0) {
-      let scope: 'cwd' | 'all' = hasCwdSessions ? 'cwd' : 'all';
+    // Step 1: Filter by CLI tool (optional) -- skip if source already specified.
+    // Returns null when cancelled.
+    let scope: 'cwd' | 'all' = hasCwdSessions ? 'cwd' : 'all';
+    const chooseSessions = async (): Promise<UnifiedSession[] | null> => {
+      if (options.source) return hasCwdSessions ? cwdSessions : sessions;
 
       while (true) {
         const pool = scope === 'cwd' ? cwdSessions : sessions;
@@ -196,7 +196,7 @@ export async function interactivePick(
 
         if (clack.isCancel(toolFilter)) {
           clack.cancel('Cancelled');
-          return;
+          return null;
         }
 
         // Scope toggle: flip and re-render
@@ -211,77 +211,81 @@ export async function interactivePick(
         }
 
         // "All tools": use entire pool
-        if (toolFilter === 'all-in-scope') {
-          filteredSessions = pool;
-          break;
-        }
+        if (toolFilter === 'all-in-scope') return pool;
 
         // Specific tool: filter by source
-        filteredSessions = pool.filter((sess) => sess.source === toolFilter);
-        break;
+        return pool.filter((sess) => sess.source === toolFilter);
       }
-    }
+    };
 
-    // Step 2: Select session -- show all with scrolling (maxItems controls viewport)
-    const PAGE_SIZE = 500;
-    const sessionOptions = filteredSessions.slice(0, PAGE_SIZE).map((sess) => ({
-      value: sess,
-      label: formatSessionForSelect(sess),
-      hint: sess.id.slice(0, 8),
-    }));
+    // Step 2: Select session. Esc/← goes back to step 1 when there is one.
+    chooseFilter: while (true) {
+      const filteredSessions = await chooseSessions();
+      if (!filteredSessions) return;
 
-    if (filteredSessions.length > PAGE_SIZE) {
-      clack.log.info(
-        chalk.gray(
-          `Showing first ${PAGE_SIZE} of ${filteredSessions.length} sessions. Use --source to narrow results.`,
-        ),
-      );
-    }
+      // Show all with scrolling (maxItems controls viewport)
+      const PAGE_SIZE = 500;
+      const sessionOptions = filteredSessions.slice(0, PAGE_SIZE).map((sess) => ({
+        value: sess,
+        label: formatSessionForSelect(sess),
+        hint: sess.id.slice(0, 8),
+      }));
 
-    while (true) {
-      const selectedSession = await clack.select({
-        message: `Select a session (${filteredSessions.length} available)`,
-        options: sessionOptions,
-        maxItems: 15,
-      });
+      if (filteredSessions.length > PAGE_SIZE) {
+        clack.log.info(
+          chalk.gray(
+            `Showing first ${PAGE_SIZE} of ${filteredSessions.length} sessions. Use --source to narrow results.`,
+          ),
+        );
+      }
 
-      if (clack.isCancel(selectedSession)) {
-        clack.cancel('Cancelled');
+      while (true) {
+        const selectedSession = await selectWithBack({
+          message: `Select a session (${filteredSessions.length} available)${options.source ? '' : ' (Esc/←: back)'}`,
+          options: sessionOptions,
+          maxItems: 15,
+        });
+
+        if (selectedSession === null) return;
+        if (selectedSession === 'back') {
+          if (!options.source) continue chooseFilter;
+          clack.cancel('Cancelled');
+          return;
+        }
+
+        const session = selectedSession;
+
+        // Step 3: Select target tool. "Back" returns to this session list.
+        const targetTool = await selectTargetTool(session);
+        if (targetTool === 'back') continue;
+        if (!targetTool) return;
+
+        const forwarding: HandoffForwardingOptions | undefined =
+          targetTool !== session.source ? { tailArgs: options.forwardArgs } : undefined;
+
+        if (forwarding) {
+          const resolved = resolveCrossToolForwarding(targetTool, forwarding);
+          await showForwardingWarnings(resolved.warnings, context);
+        }
+
+        // Step 4: Show what will happen and resume
+        console.log();
+        clack.log.info(`Working directory: ${chalk.cyan(session.cwd)}`);
+        clack.log.info(`Command: ${chalk.cyan(getResumeCommand(session, targetTool, forwarding))}`);
+        console.log();
+
+        clack.log.step(`Handing off to ${targetTool}...`);
+        clack.outro(`Launching ${targetTool}`);
+
+        // Change to session's working directory and resume
+        if (session.cwd) process.chdir(session.cwd);
+        await resume(session, targetTool, 'inline', forwarding, {
+          preset: options.preset,
+          configPath: options.configPath,
+          chain: options.chain,
+        });
         return;
       }
-
-      const session = selectedSession as UnifiedSession;
-
-      // Step 3: Select target tool. "Back" returns to this session list.
-      const targetTool = await selectTargetTool(session);
-      if (targetTool === 'back') continue;
-      if (!targetTool) return;
-
-      const forwarding: HandoffForwardingOptions | undefined =
-        targetTool !== session.source ? { tailArgs: options.forwardArgs } : undefined;
-
-      if (forwarding) {
-        const resolved = resolveCrossToolForwarding(targetTool, forwarding);
-        await showForwardingWarnings(resolved.warnings, context);
-      }
-
-      // Step 4: Show what will happen and resume
-      console.log();
-      clack.log.info(`Working directory: ${chalk.cyan(session.cwd)}`);
-      clack.log.info(`Command: ${chalk.cyan(getResumeCommand(session, targetTool, forwarding))}`);
-      console.log();
-
-      clack.log.step(`Handing off to ${targetTool}...`);
-      clack.outro(`Launching ${targetTool}`);
-
-      // Change to session's working directory and resume
-      if (session.cwd) process.chdir(session.cwd);
-      await resume(session, targetTool, 'inline', forwarding, {
-        preset: options.preset,
-        configPath: options.configPath,
-        chain: options.chain,
-      });
-      return;
     }
   } catch (error) {
     if (clack.isCancel(error)) {

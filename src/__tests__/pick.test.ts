@@ -55,6 +55,7 @@ vi.mock('../utils/resume.js', () => ({
 vi.mock('../commands/_shared.js', () => ({
   checkSingleToolAutoResume: testState.checkSingleToolAutoResume,
   selectTargetTool: testState.selectTargetTool,
+  selectWithBack: testState.select,
   showForwardingWarnings: vi.fn(async () => undefined),
 }));
 
@@ -132,5 +133,25 @@ describe('interactivePick cwd fallback', () => {
 
     expect(testState.selectTargetTool).toHaveBeenCalledTimes(2);
     expect(testState.resume).toHaveBeenCalledWith(second, 'codex', 'inline', undefined, expect.any(Object));
+  });
+
+  it('returns to the tool filter when the session list chooses back', async () => {
+    const codex = makeSession('codex-session', 'codex', os.tmpdir());
+    const claude = makeSession('claude-session', 'claude', os.tmpdir());
+    testState.getSessionsByCwd.mockResolvedValue([]);
+    testState.getAllSessions.mockResolvedValue([codex, claude]);
+    testState.checkSingleToolAutoResume.mockResolvedValue(false);
+    // filter: codex -> session list: back -> filter: claude -> session list: claude session
+    testState.select
+      .mockResolvedValueOnce('codex')
+      .mockResolvedValueOnce('back')
+      .mockResolvedValueOnce('claude')
+      .mockResolvedValueOnce(claude);
+    testState.selectTargetTool.mockResolvedValue('claude');
+
+    await interactivePick({}, { isTTY: true, supportsColor: false, version: '0.0.0-test' });
+
+    expect(testState.select.mock.calls[3][0].options.map((o: { value: unknown }) => o.value)).toEqual([claude]);
+    expect(testState.resume).toHaveBeenCalledWith(claude, 'claude', 'inline', undefined, expect.any(Object));
   });
 });
