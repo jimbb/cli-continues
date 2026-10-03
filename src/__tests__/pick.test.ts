@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as os from 'node:os';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionSource, UnifiedSession } from '../types/index.js';
 
 const testState = vi.hoisted(() => ({
@@ -22,6 +23,7 @@ vi.mock('@clack/prompts', () => ({
     step: vi.fn(),
   },
   outro: vi.fn(),
+  updateSettings: vi.fn(),
   select: testState.select,
   spinner: vi.fn(() => ({
     start: vi.fn(),
@@ -73,7 +75,12 @@ function makeSession(id: string, source: SessionSource, cwd = process.cwd()): Un
 }
 
 describe('interactivePick cwd fallback', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   beforeEach(() => {
+    vi.spyOn(process, 'chdir').mockImplementation(() => undefined);
     process.exitCode = undefined;
     testState.checkSingleToolAutoResume.mockReset();
     testState.getAllSessions.mockReset();
@@ -96,5 +103,34 @@ describe('interactivePick cwd fallback', () => {
     expect(testState.getAllSessions).toHaveBeenCalledTimes(1);
     expect(testState.checkSingleToolAutoResume).toHaveBeenCalledWith(session, testState.nativeResume);
     expect(testState.select).not.toHaveBeenCalled();
+  });
+
+  it('keeps the short session id in the picker hint', async () => {
+    const session = makeSession('12345678-1234-4234-8234-87654321abcdef', 'codex', os.tmpdir());
+    testState.getSessionsByCwd.mockResolvedValue([]);
+    testState.getAllSessions.mockResolvedValue([session]);
+    testState.checkSingleToolAutoResume.mockResolvedValue(false);
+    testState.select.mockResolvedValueOnce('all-in-scope').mockResolvedValueOnce(session);
+    testState.selectTargetTool.mockResolvedValue('codex');
+
+    await interactivePick({}, { isTTY: true, supportsColor: false, version: '0.0.0-test' });
+
+    expect(testState.select.mock.calls[1][0].options[0].hint).toBe('12345678');
+    expect(testState.select.mock.calls[1][0].options[0].label).not.toContain(os.tmpdir());
+  });
+
+  it('returns to the session list when target-tool selection chooses back', async () => {
+    const first = makeSession('first-session', 'codex', os.tmpdir());
+    const second = makeSession('second-session', 'codex', os.tmpdir());
+    testState.getSessionsByCwd.mockResolvedValue([]);
+    testState.getAllSessions.mockResolvedValue([first, second]);
+    testState.checkSingleToolAutoResume.mockResolvedValue(false);
+    testState.select.mockResolvedValueOnce('all-in-scope').mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+    testState.selectTargetTool.mockResolvedValueOnce('back').mockResolvedValueOnce('codex');
+
+    await interactivePick({}, { isTTY: true, supportsColor: false, version: '0.0.0-test' });
+
+    expect(testState.selectTargetTool).toHaveBeenCalledTimes(2);
+    expect(testState.resume).toHaveBeenCalledWith(second, 'codex', 'inline', undefined, expect.any(Object));
   });
 });

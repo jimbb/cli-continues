@@ -43,7 +43,7 @@ async function findSessionFiles(options: SessionParseOptions = {}): Promise<stri
     ? [path.join(CLAUDE_PROJECTS_DIR, claudeProjectSlugFromCwd(options.cwd))]
     : [CLAUDE_PROJECTS_DIR];
 
-  return roots.flatMap((root) =>
+  const files = roots.flatMap((root) =>
     findFiles(root, {
       match: (entry) =>
         entry.name.endsWith('.jsonl') &&
@@ -51,6 +51,21 @@ async function findSessionFiles(options: SessionParseOptions = {}): Promise<stri
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i.test(entry.name),
     }),
   );
+
+  // Claude project directories can be junctions, so the same transcript may
+  // be discovered through two paths. Keep only the first canonical path.
+  const seen = new Set<string>();
+  return files.filter((filePath) => {
+    let canonicalPath = filePath;
+    try {
+      canonicalPath = fs.realpathSync.native(filePath);
+    } catch (err) {
+      logger.debug('claude: could not resolve session path', filePath, err);
+    }
+    if (seen.has(canonicalPath)) return false;
+    seen.add(canonicalPath);
+    return true;
+  });
 }
 
 /**

@@ -110,7 +110,7 @@ export async function resumeCommand(
       console.log();
 
       const selectedTarget = await selectTargetTool(session);
-      if (!selectedTarget) return;
+      if (!selectedTarget || selectedTarget === 'back') return;
 
       const effectiveForwarding = forwardingFor(selectedTarget);
       if (effectiveForwarding) {

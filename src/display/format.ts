@@ -43,8 +43,8 @@ export function formatSessionForSelect(session: UnifiedSession): string {
   const tag = `[${session.source}]`;
   const source = colorFn(tag.padEnd(10));
   const date = session.updatedAt.toISOString().slice(0, 16).replace('T', ' ');
-  const repoDisplay = session.repo || session.cwd.split('/').slice(-1)[0] || '';
-  const summary = (session.summary || '(no summary)').slice(0, 48);
+  const repoDisplay = (session.repo || session.cwd).split(/[\\/]/).filter(Boolean).pop() || '';
+  const summary = (session.summary || '(no summary)').slice(0, 16);
 
-  return `${source}  ${date}  ${chalk.cyan(repoDisplay.padEnd(20))}  ${summary}`;
+  return `${source}  ${date}  ${chalk.cyan(repoDisplay.slice(0, 18).padEnd(18))}  ${summary}`;
 }
