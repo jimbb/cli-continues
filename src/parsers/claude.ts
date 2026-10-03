@@ -32,7 +32,8 @@ const CLAUDE_PROJECTS_DIR = process.env.CLAUDE_CONFIG_DIR
   : path.join(homeDir(), '.claude', 'projects');
 
 export function claudeProjectSlugFromCwd(cwd: string): string {
-  return cwd.replace(/\\/g, '/').replace(/:/g, '').replace(/[/.]/g, '-');
+  // Same as Claude Code: every non-alphanumeric char becomes '-' (C:\Users -> C--Users)
+  return cwd.replace(/[^a-zA-Z0-9]/g, '-');
 }
 
 /**
