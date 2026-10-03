@@ -771,6 +771,7 @@ register({
   binaryName: 'cursor-agent',
   binaryFallbacks: ['agent'],
   parseSessions: parseCursorSessions,
+  supportsCwdLookup: true,
   extractContext: extractCursorContext,
   nativeResumeArgs: (s) => ['--resume', s.id],
   crossToolArgs: (prompt) => [prompt],
@@ -894,6 +895,7 @@ register({
   // is unset, so changes to that var must also invalidate the index cache.
   extraEnvVars: ['GEMINI_CLI_HOME', 'ANTIGRAVITY_STATE_DB'],
   binaryName: 'antigravity',
+  binaryFallbacks: ['agy'],
   parseSessions: parseAntigravitySessions,
   extractContext: extractAntigravityContext,
   nativeResumeArgs: () => [],

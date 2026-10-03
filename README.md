@@ -12,6 +12,10 @@ https://github.com/user-attachments/assets/6945f3a5-bd19-45ab-9702-6df8e165a734
 [![npm version](https://img.shields.io/npm/v/continues.svg)](https://www.npmjs.com/package/continues)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+## Maintained fork
+
+This is the maintained `continues` fork at [jimbb/cli-continues](https://github.com/jimbb/cli-continues). Fork-specific fixes and upstream PR decisions are recorded in [`docs/FORK-MAINTENANCE.md`](docs/FORK-MAINTENANCE.md); user-facing changes are listed under **Unreleased** in [`CHANGELOG.md`](CHANGELOG.md).
+
 ## Supported tools
 
 16 AI coding agents, any-to-any handoff:

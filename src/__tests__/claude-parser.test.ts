@@ -118,6 +118,25 @@ describe('claude parser hardening', () => {
     expect(sessions[1].id).toBe(olderId);
   });
 
+  it('deduplicates transcripts discovered through a project-directory junction', async () => {
+    const configDir = makeConfigDir();
+    const id = '55555555-5555-4555-8555-555555555555';
+    const projectDir = path.join(configDir, 'projects', 'C-Users-me-Automation');
+    const mirrorDir = path.join(configDir, 'projects', 'C-Users-me-FWD-Automation');
+    writeJsonl(path.join(projectDir, `${id}.jsonl`), makeRows({
+      id,
+      first: '2026-04-15T10:00:00.000Z',
+      last: '2026-04-15T10:05:00.000Z',
+      cwd: 'C:\\Users\\me\\Automation',
+    }));
+    fs.symlinkSync(projectDir, mirrorDir, process.platform === 'win32' ? 'junction' : 'dir');
+
+    const { parseClaudeSessions } = await loadClaudeParser(configDir);
+    const sessions = await parseClaudeSessions();
+
+    expect(sessions.filter((session) => session.id === id)).toHaveLength(1);
+  });
+
   it('keeps Claude local-command and meta records out of conversation while preserving metadata', async () => {
     const configDir = makeConfigDir();
     const id = '44444444-4444-4444-8444-444444444444';

@@ -8,18 +8,18 @@ import { getAvailableTools } from '../utils/resume.js';
 
 /**
  * Show interactive tool-selection TUI and return the chosen target tool.
- * Returns null if user cancels or no tools are available.
+ * Returns 'back' for Escape/left-arrow and null for Ctrl+C or no available tools.
  *
  * Shared by pick, resume, and quick-resume commands to avoid 3x duplication.
  */
 export async function selectTargetTool(
   session: UnifiedSession,
   options?: { excludeSource?: boolean },
-): Promise<SessionSource | null> {
+): Promise<SessionSource | 'back' | null> {
   const availableTools = await getAvailableTools();
   const exclude = options?.excludeSource ?? true;
 
-  const targetOptions = availableTools
+  const targetOptions: { value: SessionSource | 'back'; label: string }[] = availableTools
     .filter((t) => !exclude || t !== session.source)
     .map((t) => ({
       value: t,
@@ -40,18 +40,37 @@ export async function selectTargetTool(
     return null;
   }
 
-  const targetTool = (await clack.select({
-    message: `Continue ${sourceColors[session.source](session.source)} session in:`,
-    options: targetOptions,
-    ...(exclude ? {} : { initialValue: session.source }),
-  })) as SessionSource;
-
-  if (clack.isCancel(targetTool)) {
-    clack.cancel('Cancelled');
-    return null;
+  if (exclude) {
+    targetOptions.push({
+      value: 'back',
+      label: chalk.dim('← Back to session selection'),
+    });
   }
 
-  return targetTool;
+  let goBack = false;
+  const onKeypress = (_text: string | undefined, key: { name?: string }): void => {
+    goBack = key?.name === 'escape' || key?.name === 'left';
+  };
+  const previousLeftAlias = clack.settings.aliases.get('left');
+  clack.updateSettings({ aliases: { left: 'cancel' } });
+  process.stdin.prependListener('keypress', onKeypress);
+  try {
+    const targetTool = await clack.select({
+      message: `Continue ${sourceColors[session.source](session.source)} session in (Esc/←: back):`,
+      options: targetOptions,
+      ...(exclude ? {} : { initialValue: session.source }),
+    });
+    if (clack.isCancel(targetTool)) {
+      if (goBack) return 'back';
+      clack.cancel('Cancelled');
+      return null;
+    }
+    return targetTool as SessionSource | 'back';
+  } finally {
+    process.stdin.off('keypress', onKeypress);
+    if (previousLeftAlias === undefined) clack.settings.aliases.delete('left');
+    else clack.settings.aliases.set('left', previousLeftAlias);
+  }
 }
 
 /**

@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { UnifiedSession } from '../types/index.js';
 
@@ -38,6 +39,15 @@ function writeCursorRepoJson(home: string, slug: string, data: unknown): void {
   const dir = path.join(home, '.cursor', 'projects', slug);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'repo.json'), JSON.stringify(data), 'utf8');
+}
+
+function copyCursorFixture(home: string, slug: string, sessionId: string, fixtureName: string): string {
+  const dir = path.join(home, '.cursor', 'projects', slug, 'agent-transcripts', sessionId);
+  fs.mkdirSync(dir, { recursive: true });
+  const fixturePath = path.join(import.meta.dirname, 'fixtures', fixtureName);
+  const transcriptPath = path.join(dir, `${sessionId}.jsonl`);
+  fs.copyFileSync(fixturePath, transcriptPath);
+  return transcriptPath;
 }
 
 function cursorTextRow(role: 'user' | 'assistant', text: string, timestamp: string): unknown {
@@ -128,6 +138,36 @@ describe('cursor parser confidence warnings', () => {
 });
 
 describe('cursor parser hardening', () => {
+  it('keeps a user_query whose text starts with an absolute path while filtering Cursor system reminders', async () => {
+    const home = makeCursorHome();
+    const sessionId = '12345678-1234-1234-1234-123456789abc';
+    const originalPath = copyCursorFixture(home, 'Users-test-project', sessionId, 'cursor-user-query-path.jsonl');
+    const { extractCursorContext } = await loadCursorParser(home);
+
+    const context = await extractCursorContext({
+      id: sessionId,
+      source: 'cursor',
+      cwd: '/tmp/cursor-project',
+      repo: 'test/project',
+      lines: 4,
+      bytes: fs.statSync(originalPath).size,
+      createdAt: new Date('2026-07-20T07:03:00.000Z'),
+      updatedAt: new Date('2026-07-20T07:03:00.000Z'),
+      originalPath,
+    });
+
+    expect(context.recentMessages).toEqual([
+      expect.objectContaining({ role: 'user', content: '/Users/example/project/scripts/check.ts\n\nPlease inspect this file.' }),
+      expect.objectContaining({ role: 'assistant', content: 'I will inspect the file.' }),
+    ]);
+    expect(context.markdown).toContain('### User');
+    expect(context.markdown).toContain('/Users/example/project/scripts/check.ts');
+    expect(context.markdown).toContain('### Assistant');
+    expect(context.markdown.indexOf('### User')).toBeLessThan(context.markdown.indexOf('### Assistant'));
+    expect(context.markdown).not.toContain('internal Cursor state');
+    expect(context.markdown).not.toContain('[REDACTED]');
+  });
+
   it('discovers nested transcript.jsonl and flat Cursor CLI transcript layouts', async () => {
     const home = makeCursorHome();
     const nestedId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
@@ -460,6 +500,56 @@ describe('cursor parser hardening', () => {
     expect(byId.get('bbbbbbbb-1111-2222-3333-444444444444')).toBe('/tmp/cursor-projectB-rootpath');
     expect(byId.get('cccccccc-1111-2222-3333-444444444444')).toBe('/tmp/cursor-projectC-path');
     expect(byId.get('dddddddd-1111-2222-3333-444444444444')).toBe('/tmp/cursor-projectD-rootpath');
+  });
+
+  it('reads repo.json before resolving a long project slug', async () => {
+    const home = makeCursorHome();
+    const slug = 'continues-repo-json-a-b-c-d-e-f-g-h-i';
+    const sessionId = 'eeeeeeee-1111-2222-3333-444444444444';
+    writeCursorRepoJson(home, slug, { workspace: '/tmp/cursor-project-from-repo-json' });
+    writeCursorTranscript(home, slug, sessionId, [
+      { role: 'user', message: { content: [{ type: 'text', text: 'repo.json wins quickly' }] } },
+    ]);
+
+    const { parseCursorSessions } = await loadCursorParser(home);
+    const startedAt = performance.now();
+    const sessions = await parseCursorSessions();
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(sessions.find((session) => session.id === sessionId)?.cwd).toBe('/tmp/cursor-project-from-repo-json');
+    expect(elapsedMs).toBeLessThan(100);
+  });
+
+  it('skips unrelated Cursor projects during a cwd lookup', async () => {
+    const home = makeCursorHome();
+    const targetCwd = '/tmp/current-project';
+    const unrelatedSlug = 'private-tmp-unrelated-a-b-c-d-e-f-g-h-i-j-k';
+    writeCursorTranscript(home, unrelatedSlug, 'ffffffff-1111-2222-3333-444444444444', [
+      { role: 'user', message: { content: [{ type: 'text', text: 'unrelated Cursor session' }] } },
+    ]);
+
+    const { parseCursorSessions } = await loadCursorParser(home);
+    const startedAt = performance.now();
+    const sessions = await parseCursorSessions({ cwd: targetCwd });
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(sessions).toEqual([]);
+    expect(elapsedMs).toBeLessThan(100);
+  });
+
+  it('preserves the exact cwd for a matching long slug without repo.json', async () => {
+    const home = makeCursorHome();
+    const targetCwd = '/tmp/cursor-project-a-b-c-d-e-f-g-h-i-j';
+    const slug = targetCwd.replace(/^\/+/, '').replace(/[/.]/g, '-');
+    const sessionId = '99999999-1111-2222-3333-444444444444';
+    writeCursorTranscript(home, slug, sessionId, [
+      { role: 'user', message: { content: [{ type: 'text', text: 'exact cwd lookup' }] } },
+    ]);
+
+    const { parseCursorSessions } = await loadCursorParser(home);
+    const sessions = await parseCursorSessions({ cwd: targetCwd });
+
+    expect(sessions.find((session) => session.id === sessionId)?.cwd).toBe(targetCwd);
   });
 
   it('discovers Cursor sub-agent transcripts under <sid>/subagents/', async () => {
