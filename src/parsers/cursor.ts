@@ -447,7 +447,10 @@ export async function parseCursorSessions(options: SessionParseOptions = {}): Pr
   const files = await findTranscriptFiles(options);
   const sessionsById = new Map<string, UnifiedSession>();
   const projectCwdCache = new Map<string, string>();
-  const cwdFallback = options.cwd ? path.resolve(options.cwd) : undefined;
+  // Preserve the caller's recorded form. On Windows, path.resolve('/tmp/...')
+  // turns a Unix-style test or tool path into `C:\\tmp\\...` and loses the
+  // exact cwd that the matching slug already identified.
+  const cwdFallback = options.cwd;
 
   for (const filePath of files) {
     try {

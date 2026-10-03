@@ -36,6 +36,13 @@ they are adopted.
   now represented once in the unified index.
 - Picker navigation no longer appears stuck when long Windows paths or
   summaries wrap across terminal rows.
+- Windows cwd matching now tolerates casing and slash differences, Codex
+  summaries fall back to current `response_item` prompts, and the banner no
+  longer leaves ConPTY input disabled after the first prompt.
+- Concurrent handoffs use session-specific, Windows-safe filenames instead of
+  overwriting a shared `.continues-handoff.md`.
+- Droid array-based todo state, Cursor path-prefixed prompts, bounded Cursor
+  slug resolution, and the Antigravity `agy` binary fallback are supported.
 
 ### Maintenance decisions
 

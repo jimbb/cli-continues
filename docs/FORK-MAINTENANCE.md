@@ -36,7 +36,7 @@ These are the open PRs visible on the original repository during the 2026-10-03 
 | [87](https://github.com/yigitkonur/cli-continues/pull/87) | Grok Build parser and resume | **Adopt after validation** | Large new parser with rewind semantics. Needs a sanitized fixture plus a real Grok Build storage and `grok --resume` smoke test. |
 | [86](https://github.com/yigitkonur/cli-continues/pull/86) | Droid array-based todos | **Adopted** | Carried in fork commit `1a147cc`; small backward-compatible parser fix. |
 | [85](https://github.com/yigitkonur/cli-continues/pull/85) | Kimi Code v2 storage and wire schema | **Adopt after validation** | Strong parser work, but it replaces a storage schema and needs real v2 and legacy fixtures plus a local Kimi Code check. |
-| [83](https://github.com/yigitkonur/cli-continues/pull/83) | Cursor slug scan hang and cwd lookup | **Adopt now** | Prevents exponential slug probing and avoids scanning unrelated Cursor projects. Review together with the narrower PR 81 to avoid duplicate changes. |
+| [83](https://github.com/yigitkonur/cli-continues/pull/83) | Cursor slug scan hang and cwd lookup | **Adopted** | Carried in fork commit `cf35ab0`, with a follow-up Windows cwd-form fix; prevents exponential slug probing and avoids scanning unrelated Cursor projects. |
 | [82](https://github.com/yigitkonur/cli-continues/pull/82) | Pi/OMP/CommandCode/Devin plus 7x index speedup | **Defer as a batch** | Valuable but too broad to carry atomically. Split parser integrations from index performance, then validate each tool with fixtures and real storage. |
 | [81](https://github.com/yigitkonur/cli-continues/pull/81) | Bound Cursor slug resolution | **Superseded by 83** | The safety cap is good, but PR 83 includes the broader cwd-scoped fix. Do not carry both without a diff comparison. |
 | [80](https://github.com/yigitkonur/cli-continues/pull/80) | Cursor path-prefixed user queries | **Adopted** | Carried in fork commit `1c82489`; preserves legitimate prompts beginning with `/` and includes a sanitized fixture. |
@@ -65,10 +65,8 @@ The remaining closed or superseded items were reviewed as follows:
 
 The next safe adoption wave is:
 
-1. Carry the Windows correctness pieces from PR 88 after comparing its banner and cwd changes with the fork picker work.
-2. Carry PR 89's per-session handoff file naming and add concurrent-handoff coverage.
-3. Carry the small fixes from PRs 86, 80, and 77.
-4. Review PR 90's launch-argument ordering and security boundary.
-5. Keep parser integrations (87, 85, 78, 73, 70, and the tool additions in 82) behind real-data validation.
+1. Review PR 90's launch-argument ordering and security boundary.
+2. Carry concurrent-handoff coverage for the adopted PR 89 file naming.
+3. Keep parser integrations (87, 85, 78, 73, 70, and the tool additions in 82) behind real-data validation.
 
 Every adoption should update `CHANGELOG.md`, include the upstream PR number in the commit body, and record the local validation evidence in the PR description.
