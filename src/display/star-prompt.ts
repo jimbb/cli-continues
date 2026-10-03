@@ -12,7 +12,7 @@ import { mkdir, readFile, writeFile } from 'fs/promises';
 import { homedir } from 'os';
 import { join } from 'path';
 
-const REPO = 'yigitkonur/cli-continues';
+const REPO = 'jimbb/cli-continues';
 
 function statePath(): string {
   return join(homedir(), '.continues', 'star-prompt.json');

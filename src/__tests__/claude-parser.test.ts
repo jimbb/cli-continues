@@ -80,6 +80,44 @@ describe('claude parser hardening', () => {
     expect(sessions.map((session) => session.id)).toContain(id);
   });
 
+  it('skips continues handoff prompts when picking the summary', async () => {
+    const configDir = makeConfigDir();
+    const projectDir = path.join(configDir, 'projects', '-tmp-handoff-project');
+    const cwd = '/tmp/handoff-project';
+    const handoff =
+      'Continuing a coding session from codex. Read the file .continues-handoff-abc.md in the current directory for full context and continue where it left off.';
+    const userRow = (id: string, content: unknown, timestamp: string) => ({
+      type: 'user',
+      uuid: `${id}-${timestamp}`,
+      timestamp,
+      sessionId: id,
+      cwd,
+      gitBranch: 'main',
+      message: { role: 'user', content },
+    });
+    const assistantRow = (id: string) =>
+      makeRows({ id, first: '2026-04-15T10:00:00.000Z', last: '2026-04-15T10:05:00.000Z', cwd })[1];
+
+    const followedId = '66666666-6666-4666-8666-666666666666';
+    writeJsonl(path.join(projectDir, `${followedId}.jsonl`), [
+      userRow(followedId, handoff, '2026-04-15T10:00:00.000Z'),
+      userRow(followedId, [{ type: 'text', text: '[Request interrupted by user]' }], '2026-04-15T10:01:00.000Z'),
+      userRow(followedId, 'separate the two plans first', '2026-04-15T10:02:00.000Z'),
+      assistantRow(followedId),
+    ]);
+    const onlyHandoffId = '77777777-7777-4777-8777-777777777777';
+    writeJsonl(path.join(projectDir, `${onlyHandoffId}.jsonl`), [
+      userRow(onlyHandoffId, handoff, '2026-04-15T10:00:00.000Z'),
+      assistantRow(onlyHandoffId),
+    ]);
+
+    const { parseClaudeSessions } = await loadClaudeParser(configDir);
+    const summaries = new Map((await parseClaudeSessions()).map((s) => [s.id, s.summary]));
+
+    expect(summaries.get(followedId)).toBe('separate the two plans first');
+    expect(summaries.get(onlyHandoffId)).toMatch(/^Continuing a coding session from codex/);
+  });
+
   it('orders sessions by transcript timestamps instead of filesystem mtime', async () => {
     const configDir = makeConfigDir();
     const projectDir = path.join(configDir, 'projects', '-tmp-claude-project');
@@ -123,12 +161,15 @@ describe('claude parser hardening', () => {
     const id = '55555555-5555-4555-8555-555555555555';
     const projectDir = path.join(configDir, 'projects', 'C-Users-me-Automation');
     const mirrorDir = path.join(configDir, 'projects', 'C-Users-me-FWD-Automation');
-    writeJsonl(path.join(projectDir, `${id}.jsonl`), makeRows({
-      id,
-      first: '2026-04-15T10:00:00.000Z',
-      last: '2026-04-15T10:05:00.000Z',
-      cwd: 'C:\\Users\\me\\Automation',
-    }));
+    writeJsonl(
+      path.join(projectDir, `${id}.jsonl`),
+      makeRows({
+        id,
+        first: '2026-04-15T10:00:00.000Z',
+        last: '2026-04-15T10:05:00.000Z',
+        cwd: 'C:\\Users\\me\\Automation',
+      }),
+    );
     fs.symlinkSync(projectDir, mirrorDir, process.platform === 'win32' ? 'junction' : 'dir');
 
     const { parseClaudeSessions } = await loadClaudeParser(configDir);

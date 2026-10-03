@@ -40,7 +40,20 @@ export function isSystemContent(text: string): boolean {
  */
 export function isRealUserMessage(text: string): boolean {
   if (!text) return false;
-  return !text.startsWith('<') && !text.startsWith('/') && !text.includes('Session Handoff');
+  return (
+    !text.startsWith('<') && !text.startsWith('/') && !text.startsWith('[Request interrupted') && !isHandoffPrompt(text)
+  );
+}
+
+/**
+ * The prompt continues itself sends on a cross-tool handoff: inline/reference
+ * markdown ("Session Handoff") or the Windows one-liner pointing at the handoff file.
+ */
+export function isHandoffPrompt(text: string): boolean {
+  return (
+    text.includes('Session Handoff') ||
+    (text.startsWith('Continuing a coding session from ') && text.includes('.continues-handoff'))
+  );
 }
 
 /**

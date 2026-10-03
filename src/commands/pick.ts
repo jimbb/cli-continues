@@ -100,7 +100,7 @@ export async function interactivePick(
 
       if (await checkSingleToolAutoResume(session, nativeResume)) return;
 
-      const targetTool = await selectTargetTool(session, { excludeSource: false });
+      const targetTool = await selectTargetTool(session, { allowBack: false });
       if (!targetTool || targetTool === 'back') return;
 
       const forwarding: HandoffForwardingOptions | undefined =
