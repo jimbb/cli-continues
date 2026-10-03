@@ -36,7 +36,7 @@ const STAR_PROMO_LINES: RotatingBannerLine[] = [
   () =>
     `${chalk.bgHex('#FFD93D').black.bold(' ⭐ LOVE CONTINUES? ')} ${chalk
       .hex('#FFD93D')
-      .bold('Star:')} ${chalk.hex('#00FFC8').bold('github.com/yigitkonur/cli-continues')}`,
+      .bold('Star:')} ${chalk.hex('#00FFC8').bold('github.com/jimbb/cli-continues')}`,
 ];
 
 const GENERAL_BANNER_LINES: RotatingBannerLine[] = [
