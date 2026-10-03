@@ -36,6 +36,15 @@ describe('target tool navigation', () => {
     });
   }
 
+  it('lists the session tool first as native resume', async () => {
+    const claudeSession = { source: 'claude' } as UnifiedSession;
+    state.select.mockResolvedValueOnce('claude');
+    expect(await selectTargetTool(claudeSession)).toBe('claude');
+    const options = state.select.mock.calls[0][0].options as { value: string; label: string }[];
+    expect(options.map((o) => o.value)).toEqual(['claude', 'codex', 'back']);
+    expect(options[0].label).toContain('native resume');
+  });
+
   it('offers a visible back option', async () => {
     state.select.mockResolvedValueOnce('back');
     expect(await selectTargetTool(session)).toBe('back');

@@ -8,39 +8,34 @@ import { getAvailableTools } from '../utils/resume.js';
 
 /**
  * Show interactive tool-selection TUI and return the chosen target tool.
+ * The session's own tool comes first: choosing it resumes the original session
+ * natively (e.g. `claude --resume <id>`) instead of writing a handoff.
  * Returns 'back' for Escape/left-arrow and null for Ctrl+C or no available tools.
  *
  * Shared by pick, resume, and quick-resume commands to avoid 3x duplication.
  */
 export async function selectTargetTool(
   session: UnifiedSession,
-  options?: { excludeSource?: boolean },
+  options?: { allowBack?: boolean },
 ): Promise<SessionSource | 'back' | null> {
   const availableTools = await getAvailableTools();
-  const exclude = options?.excludeSource ?? true;
+  const allowBack = options?.allowBack ?? true;
+  const name = (t: SessionSource) => sourceColors[t](t.charAt(0).toUpperCase() + t.slice(1));
 
-  const targetOptions: { value: SessionSource | 'back'; label: string }[] = availableTools
-    .filter((t) => !exclude || t !== session.source)
-    .map((t) => ({
-      value: t,
-      label:
-        t === session.source
-          ? `${sourceColors[t](t.charAt(0).toUpperCase() + t.slice(1))} (native resume)`
-          : `${sourceColors[t](t.charAt(0).toUpperCase() + t.slice(1))}`,
-    }));
+  const ordered = availableTools.includes(session.source)
+    ? [session.source, ...availableTools.filter((t) => t !== session.source)]
+    : availableTools;
+  const targetOptions: { value: SessionSource | 'back'; label: string }[] = ordered.map((t) => ({
+    value: t,
+    label: t === session.source ? `${name(t)} (native resume)` : name(t),
+  }));
 
   if (targetOptions.length === 0) {
-    const missing = ALL_TOOLS.filter((t) => !availableTools.includes(t)).map(
-      (t) => t.charAt(0).toUpperCase() + t.slice(1),
-    );
-    clack.log.warn(
-      `Only ${sourceColors[session.source](session.source)} is installed. ` +
-        `Install at least one more (${missing.join(', ')}) to enable cross-tool handoff.`,
-    );
+    clack.log.warn(`No supported CLI found on PATH. Install one of: ${ALL_TOOLS.join(', ')}.`);
     return null;
   }
 
-  if (exclude) {
+  if (allowBack) {
     targetOptions.push({
       value: 'back',
       label: chalk.dim('← Back to session selection'),
@@ -48,9 +43,8 @@ export async function selectTargetTool(
   }
 
   return selectWithBack({
-    message: `Continue ${sourceColors[session.source](session.source)} session in (Esc/←: back):`,
+    message: `Continue ${sourceColors[session.source](session.source)} session in${allowBack ? ' (Esc/←: back)' : ''}:`,
     options: targetOptions,
-    ...(exclude ? {} : { initialValue: session.source }),
   });
 }
 
