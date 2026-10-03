@@ -117,6 +117,10 @@ function eventDate(record: Record<string, unknown>): Date | undefined {
 function normalizeCwd(cwd: string): string {
   const trimmed = cwd.trim().replace(/[\\/]+$/, '');
   if (!trimmed) return '';
+  // Preserve POSIX paths recorded by Grok fixtures and remote sessions even
+  // when discovery runs on Windows; path.resolve('/srv/app') would invent
+  // `C:\\srv\\app` and break cwd filtering.
+  if (trimmed.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(trimmed)) return trimmed;
   return path.resolve(trimmed);
 }
 
