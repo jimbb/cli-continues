@@ -5,6 +5,46 @@ All notable changes to `continues` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+This fork is maintained independently from the original upstream repository.
+Fork-only changes are reviewed for Windows behavior, read-only session storage,
+safe process spawning, parser fixtures, and real local session evidence before
+they are adopted.
+
+### Added
+
+- **Fork maintenance policy and upstream PR audit** — records which upstream
+  changes are adopted, deferred, or rejected and why.
+- **Picker navigation coverage** — regression tests cover compact Windows rows,
+  Escape/left-arrow back navigation, cancellation cleanup, and returning to a
+  previously selected session.
+
+### Changed
+
+- Session picker rows use a compact folder name and short summary so Windows
+  terminal rows stay within the viewport and arrow-key scrolling remains
+  responsive.
+- Target-tool selection offers a visible `Back to session selection` action;
+  Escape and left-arrow perform the same action without leaving the picker.
+- Claude session discovery de-duplicates transcripts reached through junction
+  or mirror paths, preventing one physical session from appearing twice.
+
+### Fixed
+
+- Claude sessions discovered through the `C--Users-...` junction mirror are
+  now represented once in the unified index.
+- Picker navigation no longer appears stuck when long Windows paths or
+  summaries wrap across terminal rows.
+
+### Maintenance decisions
+
+- High-confidence upstream fixes are carried selectively after focused tests
+  and Windows verification; large tool-integration batches wait for sanitized
+  fixtures and a real executable/storage check.
+- No upstream PR is merged blindly. Each carried change gets a fork-owned
+  commit and release note.
+
 
 ## [4.1.0] - 2026-03-02
 
