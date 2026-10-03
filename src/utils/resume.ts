@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { VerbosityConfig } from '../config/index.js';
 import { getPreset, loadConfig } from '../config/index.js';
-import { ToolNotAvailableError, UnknownSourceError } from '../errors.js';
+import { ContinuesError, ToolNotAvailableError, UnknownSourceError } from '../errors.js';
 import { logger } from '../logger.js';
 import { ALL_TOOLS, adapters } from '../parsers/registry.js';
 import type { SessionContext, SessionSource, UnifiedSession } from '../types/index.js';
@@ -30,7 +30,14 @@ export interface HandoffContextOptions {
  */
 export function configuredToolArgs(tool: SessionSource): string[] {
   // ponytail: whitespace split, no quoting; add a shell-words parser if someone needs spaces inside an arg
-  const raw = process.env[`CONTINUES_${tool.toUpperCase().replace(/-/g, '_')}_ARGS`]?.trim();
+  const variable = `CONTINUES_${tool.toUpperCase().replace(/-/g, '_')}_ARGS`;
+  const raw = process.env[variable]?.trim();
+  // Windows shims run through cmd.exe even when spawn receives an argv array.
+  // Reject operators, expansion, quoting, and command separators, without
+  // echoing the value (which may contain private paths or credentials).
+  if (IS_WINDOWS && raw && /[&|<>^%!"`\r\n]/.test(raw)) {
+    throw new ContinuesError(`${variable} must use plain whitespace-separated arguments without Windows shell syntax.`);
+  }
   return raw ? raw.split(/\s+/) : [];
 }
 
@@ -132,8 +139,9 @@ export async function nativeResume(session: UnifiedSession): Promise<void> {
   const cwd = session.cwd || process.cwd();
   const adapter = adapters[session.source];
   if (!adapter) throw new UnknownSourceError(session.source);
+  const configured = configuredToolArgs(session.source);
   const binaryName = await requireToolBinaryName(session.source);
-  await runCommand(binaryName, [...adapter.nativeResumeArgs(session), ...configuredToolArgs(session.source)], cwd);
+  await runCommand(binaryName, [...adapter.nativeResumeArgs(session), ...configured], cwd);
 }
 
 /**
@@ -155,6 +163,7 @@ export async function crossToolResume(
 ): Promise<void> {
   const adapter = adapters[target];
   if (!adapter) throw new UnknownSourceError(target);
+  const configured = configuredToolArgs(target);
 
   const context = await extractContext(session, resolveHandoffConfig(contextOptions));
   const cwd = session.cwd || process.cwd();
@@ -193,10 +202,11 @@ export async function crossToolResume(
 
   const binaryName = await requireToolBinaryName(target);
   const resolved = resolveCrossToolForwarding(target, forwarding);
-  const defaultInitArgs = getDefaultHandoffInitArgs(target, resolved.extraArgs);
+  const launchArgs = [...configured, ...resolved.extraArgs];
+  const defaultInitArgs = getDefaultHandoffInitArgs(target, launchArgs);
   await runCommand(
     binaryName,
-    [...defaultInitArgs, ...configuredToolArgs(target), ...resolved.extraArgs, ...adapter.crossToolArgs(prompt, cwd)],
+    [...defaultInitArgs, ...launchArgs, ...adapter.crossToolArgs(prompt, cwd)],
     cwd,
   );
 }
@@ -377,12 +387,15 @@ export function getResumeCommand(
   if (!actualAdapter) throw new UnknownSourceError(actualTarget);
 
   if (actualTarget === session.source) {
-    return actualAdapter.resumeCommandDisplay(session);
+    const configured = configuredToolArgs(actualTarget);
+    const suffix = configured.length > 0 ? ` ${formatForwardArgs(configured)}` : '';
+    return actualAdapter.resumeCommandDisplay(session) + suffix;
   }
 
   const resolved = resolveCrossToolForwarding(actualTarget, forwarding);
-  const defaultInitArgs = getDefaultHandoffInitArgs(actualTarget, resolved.extraArgs);
-  const suffixArgs = [...defaultInitArgs, ...resolved.extraArgs];
+  const launchArgs = [...configuredToolArgs(actualTarget), ...resolved.extraArgs];
+  const defaultInitArgs = getDefaultHandoffInitArgs(actualTarget, launchArgs);
+  const suffixArgs = [...defaultInitArgs, ...launchArgs];
   const suffix = suffixArgs.length > 0 ? ` ${formatForwardArgs(suffixArgs)}` : '';
   return `continues resume ${session.id} --in ${actualTarget}${suffix}`;
 }

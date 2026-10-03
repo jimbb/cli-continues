@@ -30,7 +30,7 @@ These are the open PRs visible on the original repository during the 2026-10-03 
 
 | PR | Subject | Decision | Reason |
 | ---: | --- | --- | --- |
-| [90](https://github.com/yigitkonur/cli-continues/pull/90) | Default `CONTINUES_<TOOL>_ARGS` | **Adopt after validation** | Useful opt-in launch configuration for native and cross-tool resumes. Keep whitespace-only parsing and explicitly test that dangerous flags are never added unless configured. |
+| [90](https://github.com/yigitkonur/cli-continues/pull/90) | Default `CONTINUES_<TOOL>_ARGS` | **Adopted** | Carried in fork commit `54f7e74`, then hardened in `feat/default-tool-args`; whitespace-only parsing is explicit, values remain opt-in, the command preview includes them, and Windows rejects shell syntax before spawn. |
 | [89](https://github.com/yigitkonur/cli-continues/pull/89) | Per-session handoff files | **Adopted** | Carried in fork commit `86b105f`; fixes concurrent handoffs overwriting each other with full, Windows-safe session-specific names. |
 | [88](https://github.com/yigitkonur/cli-continues/pull/88) | Windows picker, `DEP0190`, cwd matching, Codex summaries | **Adopted** | Carried in fork commit `61a28ae`; the banner raw-mode fix, case/separator-insensitive cwd matching, no-shell `gh` calls, and Codex summary fallback complement the fork picker work. |
 | [87](https://github.com/yigitkonur/cli-continues/pull/87) | Grok Build parser and resume | **Adopt after validation** | Large new parser with rewind semantics. Needs a sanitized fixture plus a real Grok Build storage and `grok --resume` smoke test. |
@@ -65,8 +65,7 @@ The remaining closed or superseded items were reviewed as follows:
 
 The next safe adoption wave is:
 
-1. Review PR 90's launch-argument ordering and security boundary.
-2. Carry concurrent-handoff coverage for the adopted PR 89 file naming.
-3. Keep parser integrations (87, 85, 78, 73, 70, and the tool additions in 82) behind real-data validation.
+1. Add concurrent-handoff coverage around the adopted PR 89 file naming.
+2. Keep parser integrations (87, 85, 78, 73, 70, and the tool additions in 82) behind real-data validation.
 
 Every adoption should update `CHANGELOG.md`, include the upstream PR number in the commit body, and record the local validation evidence in the PR description.

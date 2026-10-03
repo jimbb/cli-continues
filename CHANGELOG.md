@@ -43,6 +43,11 @@ they are adopted.
   overwriting a shared `.continues-handoff.md`.
 - Droid array-based todo state, Cursor path-prefixed prompts, bounded Cursor
   slug resolution, and the Antigravity `agy` binary fallback are supported.
+- Opt-in `CONTINUES_<TOOL>_ARGS` values can append launch flags to native and
+  cross-tool resumes; arguments remain array elements and the handoff prompt
+  remains the final positional argument.
+- The resume command preview now includes configured native launch flags, and
+  Windows rejects shell operators or quoting in these defaults before spawn.
 
 ### Maintenance decisions
 

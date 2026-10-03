@@ -13,7 +13,7 @@ vi.mock('../utils/index.js', () => ({
   saveContext: vi.fn(),
 }));
 
-const { configuredToolArgs, nativeResume } = await import('../utils/resume.js');
+const { configuredToolArgs, getResumeCommand, nativeResume } = await import('../utils/resume.js');
 
 const session: UnifiedSession = {
   id: 'abc',
@@ -53,5 +53,12 @@ describe('CONTINUES_<TOOL>_ARGS', () => {
 
     const launchArgs = spawnMock.mock.calls.at(-1)?.[1] as string[];
     expect(launchArgs.slice(-3)).toEqual(['--resume', 'abc', '--dangerously-skip-permissions']);
+    expect(getResumeCommand(session)).toContain('--dangerously-skip-permissions');
+  });
+
+  it('rejects Windows shell syntax in configured defaults', () => {
+    if (process.platform !== 'win32') return;
+    vi.stubEnv('CONTINUES_CLAUDE_ARGS', '--model "opus"');
+    expect(() => configuredToolArgs('claude')).toThrow('CONTINUES_CLAUDE_ARGS');
   });
 });
