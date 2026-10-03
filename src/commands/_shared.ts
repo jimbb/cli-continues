@@ -47,6 +47,18 @@ export async function selectTargetTool(
     });
   }
 
+  return selectWithBack({
+    message: `Continue ${sourceColors[session.source](session.source)} session in (Esc/←: back):`,
+    options: targetOptions,
+    ...(exclude ? {} : { initialValue: session.source }),
+  });
+}
+
+/**
+ * clack.select where Escape/left-arrow return 'back' instead of cancelling.
+ * Returns null for Ctrl+C (after printing "Cancelled").
+ */
+export async function selectWithBack<Value>(opts: clack.SelectOptions<Value>): Promise<Value | 'back' | null> {
   let goBack = false;
   const onKeypress = (_text: string | undefined, key: { name?: string }): void => {
     goBack = key?.name === 'escape' || key?.name === 'left';
@@ -55,17 +67,13 @@ export async function selectTargetTool(
   clack.updateSettings({ aliases: { left: 'cancel' } });
   process.stdin.prependListener('keypress', onKeypress);
   try {
-    const targetTool = await clack.select({
-      message: `Continue ${sourceColors[session.source](session.source)} session in (Esc/←: back):`,
-      options: targetOptions,
-      ...(exclude ? {} : { initialValue: session.source }),
-    });
-    if (clack.isCancel(targetTool)) {
+    const value = await clack.select(opts);
+    if (clack.isCancel(value)) {
       if (goBack) return 'back';
       clack.cancel('Cancelled');
       return null;
     }
-    return targetTool as SessionSource | 'back';
+    return value;
   } finally {
     process.stdin.off('keypress', onKeypress);
     if (previousLeftAlias === undefined) clack.settings.aliases.delete('left');

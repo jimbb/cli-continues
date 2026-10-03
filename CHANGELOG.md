@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-10-03
+
 This fork is maintained independently from the original upstream repository.
 Fork-only changes are reviewed for Windows behavior, read-only session storage,
 safe process spawning, parser fixtures, and real local session evidence before
@@ -27,6 +29,8 @@ they are adopted.
   responsive.
 - Target-tool selection offers a visible `Back to session selection` action;
   Escape and left-arrow perform the same action without leaving the picker.
+- The session list returns to the tool filter on Escape/left-arrow, so a
+  wrong filter choice no longer means cancelling and starting over.
 - Claude session discovery de-duplicates transcripts reached through junction
   or mirror paths, preventing one physical session from appearing twice.
 
@@ -51,6 +55,9 @@ they are adopted.
 - Grok Build sessions are supported with rewind-aware conversation extraction,
   native resume metadata, and real local discovery validation. POSIX paths
   recorded by Grok remain stable when parsed on Windows.
+- Claude sessions are found for the current directory on Windows: the
+  cwd-scoped lookup now builds the same `C--Users-...` project folder name
+  Claude Code uses instead of `C-Users-...`.
 
 ### Maintenance decisions
 
