@@ -48,6 +48,9 @@ they are adopted.
   remains the final positional argument.
 - The resume command preview now includes configured native launch flags, and
   Windows rejects shell operators or quoting in these defaults before spawn.
+- Grok Build sessions are supported with rewind-aware conversation extraction,
+  native resume metadata, and real local discovery validation. POSIX paths
+  recorded by Grok remain stable when parsed on Windows.
 
 ### Maintenance decisions
 
