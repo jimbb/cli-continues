@@ -518,7 +518,7 @@ describe('kiro parser hardening', () => {
 
     expect(context.toolSummaries).toEqual([]);
     expect(context.sessionNotes?.sourceMetadata).toMatchObject({
-      supportedSurfaces: ['ide-workspace-json', 'acp-json-jsonl'],
+      supportedSurfaces: ['ide-workspace-json', 'acp-json-jsonl', 'cli-jsonl'],
       skippedSurfaces: ['cli-sqlite'],
     });
     expect(context.sessionNotes?.fidelityWarnings?.[0]).toContain('SQLite stores under ~/.kiro/ are skipped');
@@ -967,5 +967,157 @@ describe('kiro parser hardening', () => {
       content: expect.stringContaining('Kiro fidelity warning'),
     });
     expect(context.markdown).toContain('Kiro fidelity warning');
+  });
+
+  it('parses the real Kiro CLI persisted format (kind/data content blocks) with categorised tools', async () => {
+    // The actual on-disk format (~/.kiro/sessions/cli/<id>.jsonl) records each turn as
+    //   { version, kind: 'Prompt'|'AssistantMessage'|'ToolResults', data: { content: [...] } }
+    // where content[] holds typed blocks (text/thinking/toolUse/toolResult). Verified against
+    // kiro-cli v1.x sessions. Tool activity must be categorised (shell/read/edit/grep...),
+    // not flattened to generic MCP calls, and file edits must populate filesModified.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'kiro-parser-'));
+    tmpHomes.push(home);
+    const sessionDir = createKiroAcpSessionDir(home);
+    const metadataPath = path.join(sessionDir, 'cli_real.json');
+    const eventPath = path.join(sessionDir, 'cli_real.jsonl');
+
+    writeJson(metadataPath, {
+      session_id: 'cli_real',
+      cwd: '/home/dev/work/real-app',
+      created_at: '2026-04-20T01:00:00.000Z',
+      updated_at: '2026-04-20T01:05:00.000Z',
+      title: 'Fix the halloween flow',
+    });
+    writeJsonl(eventPath, [
+      {
+        version: 'v1',
+        kind: 'Prompt',
+        data: {
+          message_id: 'm1',
+          content: [{ kind: 'text', data: 'check the sim game automation' }],
+          meta: { timestamp: 1792171869 },
+        },
+      },
+      {
+        version: 'v1',
+        kind: 'AssistantMessage',
+        data: {
+          message_id: 'm2',
+          content: [
+            { kind: 'thinking', data: { text: '', redactedContent: [1, 2, 3], signature: null } },
+            { kind: 'text', data: 'Let me search and run the tests.' },
+            {
+              kind: 'toolUse',
+              data: {
+                toolUseId: 'tu_grep',
+                name: 'grep',
+                input: { __tool_use_purpose: 'find refs', pattern: 'sim_game', output_mode: 'files_with_matches' },
+              },
+            },
+            {
+              kind: 'toolUse',
+              data: {
+                toolUseId: 'tu_shell',
+                name: 'shell',
+                input: { __tool_use_purpose: 'run tests', command: 'pytest -q' },
+              },
+            },
+            {
+              kind: 'toolUse',
+              data: {
+                toolUseId: 'tu_write',
+                name: 'write',
+                input: {
+                  __tool_use_purpose: 'patch the runner',
+                  command: 'strReplace',
+                  path: '/home/dev/work/real-app/runner.py',
+                  oldStr: 'foo',
+                  newStr: 'bar',
+                },
+              },
+            },
+          ],
+        },
+      },
+      {
+        version: 'v1',
+        kind: 'ToolResults',
+        data: {
+          message_id: 'm3',
+          content: [
+            {
+              kind: 'toolResult',
+              data: {
+                toolUseId: 'tu_grep',
+                status: 'success',
+                content: [{ kind: 'json', data: { numMatches: 3, numFiles: 2 } }],
+              },
+            },
+            {
+              kind: 'toolResult',
+              data: {
+                toolUseId: 'tu_shell',
+                status: 'success',
+                content: [{ kind: 'json', data: { exit_status: 'exit status: 0', stdout: 'passed' } }],
+              },
+            },
+            {
+              kind: 'toolResult',
+              data: {
+                toolUseId: 'tu_write',
+                status: 'success',
+                content: [{ kind: 'text', data: 'Updated runner.py' }],
+              },
+            },
+          ],
+        },
+      },
+      {
+        version: 'v1',
+        kind: 'AssistantMessage',
+        data: { message_id: 'm4', content: [{ kind: 'text', data: 'Tests pass. Done.' }] },
+      },
+    ]);
+
+    const { extractKiroContext, parseKiroSessions } = await loadKiroParserWithHome(home);
+    const sessions = await parseKiroSessions();
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      id: 'cli_real',
+      source: 'kiro',
+      cwd: '/home/dev/work/real-app',
+      // Summary prefers the first real user message now that extraction works.
+      summary: 'check the sim game automation',
+    });
+
+    const context = await extractKiroContext(sessions[0]);
+
+    // Thinking blocks must not leak into the conversation.
+    expect(JSON.stringify(context.recentMessages)).not.toContain('redactedContent');
+    expect(context.recentMessages).toEqual([
+      { role: 'user', content: 'check the sim game automation', timestamp: new Date(1792171869 * 1000) },
+      { role: 'assistant', content: 'Let me search and run the tests.', timestamp: undefined },
+      { role: 'assistant', content: 'Tests pass. Done.', timestamp: undefined },
+    ]);
+
+    // File edits populate filesModified.
+    expect(context.filesModified).toContain('/home/dev/work/real-app/runner.py');
+
+    // Tools are categorised by name, not flattened to a single mcp bucket.
+    const toolNames = context.toolSummaries.map((t) => t.name).sort();
+    expect(toolNames).toEqual(['edit', 'grep', 'shell']);
+
+    const shell = context.toolSummaries.find((t) => t.name === 'shell');
+    expect(shell?.samples?.[0]?.summary).toContain('$ pytest -q');
+    const edit = context.toolSummaries.find((t) => t.name === 'edit');
+    expect(edit?.samples?.[0]?.data).toMatchObject({ category: 'edit', filePath: '/home/dev/work/real-app/runner.py' });
+
+    // Successfully parsed CLI sessions must NOT carry the SQLite fidelity caveat.
+    expect(context.sessionNotes?.fidelityWarnings).toBeUndefined();
+    expect(context.markdown).not.toContain('Kiro fidelity warning');
+    expect(context.sessionNotes?.sourceMetadata).toMatchObject({
+      supportedSurfaces: ['ide-workspace-json', 'acp-json-jsonl', 'cli-jsonl'],
+    });
   });
 });

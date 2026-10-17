@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Kiro CLI session support** — the `kiro` source now parses real Kiro CLI
+  sessions stored under `~/.kiro/sessions/cli/` (persisted `Prompt` /
+  `AssistantMessage` / `ToolResults` JSONL records with `text`/`thinking`/
+  `toolUse`/`toolResult` content blocks), in addition to Kiro IDE workspace
+  sessions. Conversation, categorised tool activity (shell/read/edit/grep/
+  glob/search/fetch), and files modified are all extracted.
+
+### Changed
+
+- The `kiro` adapter now does native resume via `kiro-cli chat --resume-id
+  <id>` (binary `kiro-cli`, falling back to `kiro`) and launches cross-tool
+  handoffs with `kiro-cli chat <prompt>`. Its label is now "Kiro" (covering
+  both the CLI and IDE surfaces) rather than "Kiro IDE".
+- The Kiro SQLite fidelity warning is now only emitted for sessions that
+  cannot be fully recovered (e.g. IDE workspace JSON); successfully parsed
+  Kiro CLI JSONL sessions no longer carry it.
+
 ## [4.3.0] - 2026-10-03
 
 ### Added

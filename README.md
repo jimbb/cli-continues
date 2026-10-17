@@ -193,7 +193,7 @@ Every tool stores sessions differently — different formats, different schemas,
 | Factory Droid | JSONL + JSON | `~/.factory/sessions/` |
 | Cursor | JSONL | `~/.cursor/projects/*/agent-transcripts/` |
 | Amp | JSON | `~/.local/share/amp/threads/` |
-| Kiro | JSON | `~/Library/Application Support/Kiro/workspace-sessions/` |
+| Kiro | JSON / JSONL | `~/.kiro/sessions/cli/` (CLI) · `~/Library/Application Support/Kiro/workspace-sessions/` (IDE) |
 | Crush | SQLite | `~/.crush/crush.db` |
 | Cline | JSON | VS Code `globalStorage/saoudrizwan.claude-dev/tasks/` |
 | Roo Code | JSON | VS Code `globalStorage/rooveterinaryinc.roo-cline/tasks/` |

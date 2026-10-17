@@ -43,13 +43,14 @@ export const SHELL_TOOLS: ReadonlySet<string> = new Set([
   'run_terminal_command',
   'run_shell_command',
   'Shell',
+  'shell',
   'exec_command',
   'shell_command',
   'Execute',
 ]);
 
 /** File read tools */
-export const READ_TOOLS: ReadonlySet<string> = new Set(['Read', 'ReadFile', 'read_file']);
+export const READ_TOOLS: ReadonlySet<string> = new Set(['Read', 'ReadFile', 'read_file', 'read']);
 
 /** File write/create tools */
 export const WRITE_TOOLS: ReadonlySet<string> = new Set([
