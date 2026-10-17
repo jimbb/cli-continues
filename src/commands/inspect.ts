@@ -21,6 +21,22 @@ import { readJsonlFile } from '../utils/jsonl.js';
 
 type SessionFormat = 'jsonl' | 'json' | 'sqlite' | 'yaml' | 'binary';
 
+/**
+ * Resolve the JSONL event file for a Kiro CLI session.
+ *
+ * Kiro CLI persists sessions as a `.json` metadata file plus a sibling `.jsonl`
+ * event stream under `~/.kiro/sessions/cli/`. `session.originalPath` points at
+ * the `.json`, so raw-event analysis must read the `.jsonl` sibling instead.
+ * Returns `undefined` for Kiro IDE workspace sessions (no sibling JSONL).
+ */
+function resolveKiroCliEventPath(session?: UnifiedSession): string | undefined {
+  if (!session || session.source !== 'kiro') return undefined;
+  if (session.originalPath.endsWith('.jsonl')) return session.originalPath;
+  if (!session.originalPath.endsWith('.json')) return undefined;
+  const eventPath = `${session.originalPath.slice(0, -'.json'.length)}.jsonl`;
+  return fs.existsSync(eventPath) ? eventPath : undefined;
+}
+
 function getSessionFormat(source: string, session?: UnifiedSession): SessionFormat {
   switch (source) {
     case 'claude':
@@ -41,9 +57,12 @@ function getSessionFormat(source: string, session?: UnifiedSession): SessionForm
       }
       return 'binary';
     }
+    case 'kiro':
+      // Kiro CLI sessions have a sibling JSONL event stream; IDE workspace
+      // sessions are a single JSON blob.
+      return resolveKiroCliEventPath(session) ? 'jsonl' : 'json';
     case 'gemini':
     case 'amp':
-    case 'kiro':
     case 'cline':
     case 'roo-code':
     case 'kilo-code':
@@ -207,6 +226,69 @@ function analyzeRawMessages(messages: Array<Record<string, unknown>>): {
   };
 }
 
+/**
+ * Analyze raw Kiro CLI persisted JSONL records.
+ *
+ * Unlike the Anthropic-style stream that `analyzeRawMessages` handles, Kiro CLI
+ * records are `{ kind: 'Prompt'|'AssistantMessage'|'ToolResults', data: { content: [...] } }`
+ * where each content block is discriminated by `kind` (`text`/`thinking`/
+ * `toolUse`/`toolResult`) and tool calls carry `data.name`.
+ */
+function analyzeKiroCliMessages(messages: Array<Record<string, unknown>>): {
+  events: RawEventCounts;
+  blocks: ContentBlockCounts;
+  tools: ToolCategoryCounts;
+  model: string | undefined;
+} {
+  const eventMap = new Map<string, number>();
+  const blockMap = new Map<string, number>();
+  const toolMap = new Map<string, number>();
+  let model: string | undefined;
+
+  for (const msg of messages) {
+    const kind = (msg.kind as string) || 'unknown';
+    eventMap.set(kind, (eventMap.get(kind) || 0) + 1);
+
+    const data = msg.data as { content?: unknown } | undefined;
+    if (!data || !Array.isArray(data.content)) continue;
+
+    for (const block of data.content as Array<Record<string, unknown>>) {
+      const blockKind = (block.kind as string) || 'unknown';
+      blockMap.set(blockKind, (blockMap.get(blockKind) || 0) + 1);
+
+      // thinking blocks carry the model id on their data payload
+      if (blockKind === 'thinking' && !model) {
+        const blockData = block.data as { modelId?: string } | undefined;
+        if (blockData?.modelId && blockData.modelId !== 'auto') model = blockData.modelId;
+      }
+
+      if (blockKind === 'toolUse') {
+        const blockData = block.data as { name?: string } | undefined;
+        if (blockData?.name) {
+          const category = classifyToolName(blockData.name);
+          if (category) {
+            const label = CATEGORY_LABELS[category] || category;
+            toolMap.set(label, (toolMap.get(label) || 0) + 1);
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    events: { byType: eventMap, total: messages.length },
+    blocks: {
+      byType: blockMap,
+      total: Array.from(blockMap.values()).reduce((a, b) => a + b, 0),
+    },
+    tools: {
+      byType: toolMap,
+      total: Array.from(toolMap.values()).reduce((a, b) => a + b, 0),
+    },
+    model,
+  };
+}
+
 const CATEGORY_LABELS: Record<string, string> = {
   shell: 'Shell/Bash',
   read: 'Read',
@@ -319,10 +401,12 @@ function renderSourceFiles(
   mainSize: number,
   subagentFiles: SubagentFileInfo[],
   toolResultFiles: ToolResultFileInfo[],
+  mainPath: string = session.originalPath,
 ): string {
   const lines: string[] = [chalk.cyan.bold('📂 Source Files')];
 
-  lines.push(`  Main JSONL:   ${chalk.gray(session.originalPath)} (${mainLines} lines, ${formatBytes(mainSize)})`);
+  const label = mainPath.endsWith('.jsonl') ? 'Main JSONL:' : 'Main file: ';
+  lines.push(`  ${label}   ${chalk.gray(mainPath)} (${mainLines} lines, ${formatBytes(mainSize)})`);
 
   if (subagentFiles.length > 0) {
     const totalSubLines = subagentFiles.reduce((s, f) => s + f.lines, 0);
@@ -647,11 +731,15 @@ export async function inspectSession(
 
   // 2. Read raw events (format-aware)
   const format = getSessionFormat(session.source, session);
+  const kiroCliEventPath = resolveKiroCliEventPath(session);
+  // For Kiro CLI the raw event stream lives in the sibling .jsonl, not the
+  // .json metadata file that session.originalPath points at.
+  const rawEventPath = kiroCliEventPath ?? session.originalPath;
   let rawMessages: Array<Record<string, unknown>> = [];
   let rawEventNote = '';
 
   if (format === 'jsonl') {
-    rawMessages = await readJsonlFile<Record<string, unknown>>(session.originalPath);
+    rawMessages = await readJsonlFile<Record<string, unknown>>(rawEventPath);
   } else if (format === 'json') {
     try {
       const content = fs.readFileSync(session.originalPath, 'utf-8');
@@ -668,10 +756,12 @@ export async function inspectSession(
     rawEventNote = '(raw event analysis not available for binary/artifact-backed sessions)';
   }
 
-  const { events, blocks, tools, model } = analyzeRawMessages(rawMessages);
+  const { events, blocks, tools, model } = kiroCliEventPath
+    ? analyzeKiroCliMessages(rawMessages)
+    : analyzeRawMessages(rawMessages);
 
   // 3. File stats
-  const mainFileStats = fs.statSync(session.originalPath);
+  const mainFileStats = fs.statSync(rawEventPath);
   const mainSize = mainFileStats.size;
   const mainLines =
     format === 'jsonl' ? rawMessages.length : format === 'binary' ? session.lines : countLines(session.originalPath);
@@ -732,7 +822,7 @@ export async function inspectSession(
   const output: string[] = [];
 
   output.push(renderHeader(session.id));
-  output.push(renderSourceFiles(session, mainLines, mainSize, subagentFiles, toolResultFiles));
+  output.push(renderSourceFiles(session, mainLines, mainSize, subagentFiles, toolResultFiles, rawEventPath));
   output.push(renderEventDistribution(events, session.source));
   if (rawMessages.length === 0 && rawEventNote) {
     output.push(chalk.gray(`  ${rawEventNote}\n`));

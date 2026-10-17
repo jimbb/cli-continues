@@ -13,12 +13,23 @@ import type {
   ToolUsageSummary,
   UnifiedSession,
 } from '../types/index.js';
+import { classifyToolName } from '../types/tool-names.js';
 import { findFiles, listSubdirectories, mapConcurrent } from '../utils/fs-helpers.js';
 import { readJsonlFile } from '../utils/jsonl.js';
 import { generateHandoffMarkdown } from '../utils/markdown.js';
 import { cleanSummary, extractRepoFromCwd, homeDir, trimMessages } from '../utils/parser-helpers.js';
 import { matchesCwd } from '../utils/slug.js';
-import { mcpSummary, SummaryCollector } from '../utils/tool-summarizer.js';
+import {
+  fetchSummary,
+  fileSummary,
+  globSummary,
+  grepSummary,
+  mcpSummary,
+  SummaryCollector,
+  searchSummary,
+  shellSummary,
+  truncate,
+} from '../utils/tool-summarizer.js';
 
 // ── Kiro Storage ────────────────────────────────────────────────────────────
 
@@ -384,7 +395,10 @@ function extractPromptText(record: JsonRecord): string {
 function extractAcpTimestamp(record: JsonRecord, fallback?: JsonRecord): Date | undefined {
   return (
     getDate(record, ['timestamp', 'createdAt', 'dateCreated', 'time']) ??
-    getDate(fallback, ['timestamp', 'createdAt', 'dateCreated', 'time'])
+    // Real Kiro CLI persisted blocks store the time under `meta.timestamp` (epoch seconds).
+    getDate(getRecord(record, ['meta']), ['timestamp', 'createdAt', 'dateCreated', 'time']) ??
+    getDate(fallback, ['timestamp', 'createdAt', 'dateCreated', 'time']) ??
+    getDate(getRecord(fallback, ['meta']), ['timestamp', 'createdAt', 'dateCreated', 'time'])
   );
 }
 
@@ -405,6 +419,19 @@ const KIRO_PERSISTED_ENVELOPE_KEYS = [
 function unwrapKiroPersistedEnvelope(
   event: JsonRecord,
 ): { kind: 'assistant' | 'user' | 'tool_results'; payload: JsonRecord } | undefined {
+  // Real Kiro CLI persisted format (verified on-disk, ~/.kiro/sessions/cli/<id>.jsonl):
+  //   { "version": "v1", "kind": "AssistantMessage" | "Prompt" | "ToolResults", "data": {...} }
+  // The `kind` discriminator carries the record type and `data` holds the payload
+  // (with a `content[]` array of `text`/`thinking`/`toolUse`/`toolResult` blocks).
+  const recordKind = typeof event.kind === 'string' ? event.kind : undefined;
+  if (recordKind && isRecord(event.data)) {
+    if (recordKind === 'AssistantMessage') return { kind: 'assistant', payload: event.data };
+    // `Prompt` is the persisted name for a user turn; `UserMessage` kept for tolerance.
+    if (recordKind === 'Prompt' || recordKind === 'UserMessage') return { kind: 'user', payload: event.data };
+    if (recordKind === 'ToolResults') return { kind: 'tool_results', payload: event.data };
+  }
+
+  // Legacy / speculative envelope shape: { "AssistantMessage": {payload} }.
   for (const key of KIRO_PERSISTED_ENVELOPE_KEYS) {
     const value = event[key];
     if (!isRecord(value)) continue;
@@ -414,6 +441,38 @@ function unwrapKiroPersistedEnvelope(
     if (lowered === 'toolresults') return { kind: 'tool_results', payload: value };
   }
   return undefined;
+}
+
+/**
+ * Extract visible text from a Kiro CLI persisted `data.content[]` block array.
+ * Blocks are discriminated by `kind`: `text` (data is a string), `thinking`
+ * (extended-thinking trace — skipped), `toolUse`/`toolResult` (tool activity —
+ * handled separately). Returns only the user-visible `text` blocks joined.
+ */
+function extractKiroPersistedText(payload: JsonRecord): string {
+  const content = payload.content;
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) {
+    // Fall back to the generic extractor for non-block shapes.
+    return extractAcpRecordText(payload);
+  }
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!isRecord(block)) {
+      if (typeof block === 'string') parts.push(block);
+      continue;
+    }
+    const blockKind = typeof block.kind === 'string' ? block.kind : undefined;
+    if (blockKind === 'text' && typeof block.data === 'string') {
+      parts.push(block.data);
+    } else if (blockKind === undefined) {
+      // Unknown shape — let extractBlockText decide (handles {type:'text',text}).
+      const text = extractBlockText(block);
+      if (text) parts.push(text);
+    }
+    // Skip `thinking`, `toolUse`, `toolResult` — not user-visible conversation.
+  }
+  return parts.join('\n');
 }
 
 function extractAcpMessages(events: readonly unknown[]): ConversationMessage[] {
@@ -468,7 +527,7 @@ function extractAcpMessages(events: readonly unknown[]): ConversationMessage[] {
       if (persisted.kind === 'user') {
         flushAssistant();
         flushUser();
-        const content = extractAcpRecordText(persisted.payload).trim();
+        const content = extractKiroPersistedText(persisted.payload).trim();
         if (content) {
           messages.push({
             role: 'user',
@@ -481,7 +540,7 @@ function extractAcpMessages(events: readonly unknown[]): ConversationMessage[] {
       // assistant
       flushAssistant();
       flushUser();
-      const content = extractAcpRecordText(persisted.payload).trim();
+      const content = extractKiroPersistedText(persisted.payload).trim();
       if (content) {
         messages.push({
           role: 'assistant',
@@ -741,7 +800,231 @@ function mergeAcpToolUpdate(invocation: AcpToolInvocation, update: JsonRecord): 
   }
 }
 
+// ── Real Kiro CLI persisted tool extraction ─────────────────────────────────
+// The on-disk format (~/.kiro/sessions/cli/<id>.jsonl) records tool activity as
+// `toolUse` blocks inside `AssistantMessage.data.content[]` and `toolResult`
+// blocks inside `ToolResults.data.content[]`, correlated by `toolUseId`. This is
+// distinct from the ACP wire-protocol `tool_call`/`tool_call_update` path above.
+
+interface KiroToolUse {
+  toolUseId?: string;
+  name: string;
+  input: JsonRecord;
+}
+
+/** Detect whether an event stream is the real Kiro CLI persisted format. */
+function hasKiroPersistedRecords(events: readonly unknown[]): boolean {
+  for (const event of events) {
+    if (!isRecord(event)) continue;
+    const kind = typeof event.kind === 'string' ? event.kind : undefined;
+    if ((kind === 'AssistantMessage' || kind === 'Prompt' || kind === 'ToolResults') && isRecord(event.data)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Collect `toolUse` blocks from an assistant payload's `content[]`. */
+function collectKiroToolUses(payload: JsonRecord): KiroToolUse[] {
+  const content = payload.content;
+  if (!Array.isArray(content)) return [];
+  const uses: KiroToolUse[] = [];
+  for (const block of content) {
+    if (!isRecord(block) || block.kind !== 'toolUse') continue;
+    const data = isRecord(block.data) ? block.data : undefined;
+    if (!data) continue;
+    const name = typeof data.name === 'string' ? data.name : undefined;
+    if (!name) continue;
+    uses.push({
+      toolUseId: typeof data.toolUseId === 'string' ? data.toolUseId : undefined,
+      name,
+      input: isRecord(data.input) ? data.input : {},
+    });
+  }
+  return uses;
+}
+
+/** Render a kiro `toolResult.content[]` array into a short text preview. */
+function renderKiroToolResult(resultContent: unknown): string {
+  if (typeof resultContent === 'string') return resultContent;
+  if (!Array.isArray(resultContent)) return '';
+  const parts: string[] = [];
+  for (const item of resultContent) {
+    if (!isRecord(item)) {
+      if (typeof item === 'string') parts.push(item);
+      continue;
+    }
+    const kind = typeof item.kind === 'string' ? item.kind : undefined;
+    if (kind === 'text' && typeof item.data === 'string') {
+      parts.push(item.data);
+    } else if (kind === 'json') {
+      try {
+        parts.push(JSON.stringify(item.data));
+      } catch {
+        /* ignore unserialisable result */
+      }
+    }
+  }
+  return parts.join('\n');
+}
+
+/**
+ * Extract tool summaries + files modified from the real Kiro CLI persisted format.
+ * Mirrors the categorisation other JSONL parsers (codex, claude) apply so the
+ * handoff's Tool Activity section is accurate rather than a flat MCP dump.
+ */
+function extractKiroPersistedToolData(
+  events: readonly unknown[],
+  config?: VerbosityConfig,
+): { summaries: ToolUsageSummary[]; filesModified: string[] } {
+  const collector = new SummaryCollector(config);
+  // Correlate results back to their originating call by toolUseId.
+  const resultsById = new Map<string, { text: string; isError: boolean }>();
+
+  for (const event of events) {
+    if (!isRecord(event) || event.kind !== 'ToolResults' || !isRecord(event.data)) continue;
+    const content = (event.data as JsonRecord).content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (!isRecord(block) || block.kind !== 'toolResult' || !isRecord(block.data)) continue;
+      const data = block.data as JsonRecord;
+      const id = typeof data.toolUseId === 'string' ? data.toolUseId : undefined;
+      if (!id) continue;
+      const status = typeof data.status === 'string' ? data.status : undefined;
+      resultsById.set(id, {
+        text: renderKiroToolResult(data.content),
+        isError: isFailedToolStatus(status),
+      });
+    }
+  }
+
+  for (const event of events) {
+    if (!isRecord(event) || event.kind !== 'AssistantMessage' || !isRecord(event.data)) continue;
+    for (const use of collectKiroToolUses(event.data as JsonRecord)) {
+      const result = use.toolUseId ? resultsById.get(use.toolUseId) : undefined;
+      const resultText = result?.text;
+      const isError = result?.isError ?? false;
+      addKiroToolSample(collector, use, resultText, isError);
+    }
+  }
+
+  return { summaries: collector.getSummaries(), filesModified: collector.getFilesModified() };
+}
+
+function addKiroToolSample(
+  collector: SummaryCollector,
+  use: KiroToolUse,
+  resultText: string | undefined,
+  isError: boolean,
+): void {
+  const { name, input } = use;
+  const category = classifyToolName(name);
+
+  if (name === 'shell' || category === 'shell') {
+    const command = String(input.command ?? input.cmd ?? '');
+    if (!command) return;
+    const exitMatch = resultText?.match(/exit(?:ed with)? (?:code|status)[:\s]+(\d+)/i);
+    const exitCode = exitMatch ? Number(exitMatch[1]) : undefined;
+    collector.add('shell', shellSummary(command, resultText), {
+      data: {
+        category: 'shell',
+        command,
+        ...(exitCode !== undefined ? { exitCode } : {}),
+        ...(isError ? { errored: true } : {}),
+      },
+      isError,
+    });
+    return;
+  }
+
+  if (name === 'read' || category === 'read') {
+    // kiro-cli `read` takes an `operations[]` array of { mode, path }.
+    const ops = Array.isArray(input.operations) ? input.operations : [];
+    const paths = ops
+      .map((op) => (isRecord(op) && typeof op.path === 'string' ? op.path : undefined))
+      .filter((p): p is string => Boolean(p));
+    const singlePath = typeof input.path === 'string' ? input.path : undefined;
+    const targets = paths.length > 0 ? paths : singlePath ? [singlePath] : [];
+    if (targets.length === 0) {
+      collector.add('read', 'read (unknown target)', { data: { category: 'read', filePath: '(unknown)' } });
+      return;
+    }
+    for (const filePath of targets) {
+      collector.add('read', fileSummary('read', filePath), { data: { category: 'read', filePath } });
+    }
+    return;
+  }
+
+  if (name === 'write' || name === 'fs_write' || category === 'write' || category === 'edit') {
+    const filePath = typeof input.path === 'string' ? input.path : '(unknown)';
+    const command = typeof input.command === 'string' ? input.command : undefined;
+    // strReplace/insert/append edit an existing file; create writes a new one.
+    const isCreate = command === 'create' || command === 'createFile';
+    const op: 'write' | 'edit' = isCreate ? 'write' : 'edit';
+    collector.add(op, withKiroResult(fileSummary(op, filePath, undefined, isCreate), resultText, isError), {
+      data: op === 'write' ? { category: 'write', filePath } : { category: 'edit', filePath },
+      filePath,
+      isWrite: true,
+      isError,
+    });
+    return;
+  }
+
+  if (name === 'grep' || category === 'grep') {
+    const pattern = String(input.pattern ?? '');
+    const target = typeof input.path === 'string' ? input.path : undefined;
+    collector.add('grep', grepSummary(pattern, target), {
+      data: { category: 'grep', pattern, ...(target ? { targetPath: target } : {}) },
+      isError,
+    });
+    return;
+  }
+
+  if (name === 'glob' || category === 'glob') {
+    const pattern = String(input.pattern ?? '');
+    collector.add('glob', globSummary(pattern), { data: { category: 'glob', pattern }, isError });
+    return;
+  }
+
+  if (name === 'web_search' || category === 'search') {
+    const query = String(input.query ?? '');
+    collector.add('web_search', searchSummary(query), { data: { category: 'search', query }, isError });
+    return;
+  }
+
+  if (name === 'web_fetch' || category === 'fetch') {
+    const url = String(input.url ?? '');
+    collector.add('web_fetch', fetchSummary(url), { data: { category: 'fetch', url }, isError });
+    return;
+  }
+
+  // Everything else (e.g. `code`, MCP tools): generic MCP-style sample.
+  const { __tool_use_purpose: _purpose, ...cleanInput } = input;
+  const params = formatToolParams({ input: cleanInput });
+  collector.add(name, mcpSummary(name, truncate(params, 100), resultText), {
+    data: {
+      category: 'mcp',
+      toolName: name,
+      ...(params ? { params: truncate(params, 100) } : {}),
+      ...(resultText ? { result: truncate(resultText, 100) } : {}),
+    },
+    isError,
+  });
+}
+
+function withKiroResult(summary: string, result: string | undefined, isError: boolean): string {
+  if (isError) return `${summary} [error]`;
+  if (result) return `${summary} → "${truncate(result, 60)}"`;
+  return summary;
+}
+
 function extractAcpToolSummaries(events: readonly unknown[], config?: VerbosityConfig): ToolUsageSummary[] {
+  // Real Kiro CLI persisted format uses typed content blocks; delegate to the
+  // categorising extractor so Tool Activity is accurate.
+  if (hasKiroPersistedRecords(events)) {
+    return extractKiroPersistedToolData(events, config).summaries;
+  }
+
   const invocations: AcpToolInvocation[] = [];
   const invocationsById = new Map<string, AcpToolInvocation>();
 
@@ -1101,18 +1384,21 @@ function resolveContextSessionPath(session: UnifiedSession): string {
   return session.originalPath;
 }
 
-function buildSessionNotes(session: UnifiedSession): SessionNotes {
+function buildSessionNotes(session: UnifiedSession, degraded = true): SessionNotes {
   return {
     ...(session.model ? { model: session.model } : {}),
     sourceMetadata: {
-      supportedSurfaces: ['ide-workspace-json', 'acp-json-jsonl'],
+      supportedSurfaces: ['ide-workspace-json', 'acp-json-jsonl', 'cli-jsonl'],
       skippedSurfaces: ['cli-sqlite'],
     },
-    fidelityWarnings: [KIRO_FIDELITY_WARNING],
+    // The fidelity caveat only applies when we could not fully recover a session
+    // (e.g. IDE workspace JSON without a stable tool-call schema). Real Kiro CLI
+    // JSONL sessions parse completely, so we omit the warning for them.
+    ...(degraded ? { fidelityWarnings: [KIRO_FIDELITY_WARNING] } : {}),
   };
 }
 
-function buildKiroTimeline(messages: readonly ConversationMessage[]): SessionEvent[] {
+function buildKiroTimeline(messages: readonly ConversationMessage[], degraded = true): SessionEvent[] {
   const timeline: SessionEvent[] = messages.map((message, index) => ({
     kind: 'message',
     sequence: index,
@@ -1124,11 +1410,13 @@ function buildKiroTimeline(messages: readonly ConversationMessage[]): SessionEve
     isMeta: message.isMeta,
   }));
 
-  timeline.push({
-    kind: 'warning',
-    sequence: timeline.length,
-    content: KIRO_FIDELITY_WARNING,
-  });
+  if (degraded) {
+    timeline.push({
+      kind: 'warning',
+      sequence: timeline.length,
+      content: KIRO_FIDELITY_WARNING,
+    });
+  }
 
   return timeline;
 }
@@ -1176,9 +1464,17 @@ export async function extractKiroContext(session: UnifiedSession, config?: Verbo
     };
     const filesModified: string[] = [];
     const pendingTasks: string[] = [];
-    const toolSummaries = extractAcpToolSummaries(events, cfg);
-    const sessionNotes = buildSessionNotes(enrichedSession);
-    const timeline = buildKiroTimeline(messages);
+    let toolSummaries: ToolUsageSummary[];
+    const isRealCli = hasKiroPersistedRecords(events);
+    if (isRealCli) {
+      const toolData = extractKiroPersistedToolData(events, cfg);
+      toolSummaries = toolData.summaries;
+      filesModified.push(...toolData.filesModified);
+    } else {
+      toolSummaries = extractAcpToolSummaries(events, cfg);
+    }
+    const sessionNotes = buildSessionNotes(enrichedSession, !isRealCli);
+    const timeline = buildKiroTimeline(messages, !isRealCli);
 
     const markdown = generateHandoffMarkdown(
       enrichedSession,

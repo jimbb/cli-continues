@@ -796,18 +796,24 @@ register({
   mapHandoffFlags: mapAmpFlags,
 });
 
-// ── Kiro IDE ─────────────────────────────────────────────────────────
+// ── Kiro (IDE + CLI) ─────────────────────────────────────────────────
+// Discovers Kiro IDE workspace sessions and Kiro CLI sessions
+// (~/.kiro/sessions/cli/). Native resume targets the CLI via
+// `kiro-cli chat --resume-id <id>`; cross-tool handoff launches a fresh
+// `kiro-cli chat <prompt>`.
 register({
   name: 'kiro',
-  label: 'Kiro IDE',
+  label: 'Kiro',
   color: chalk.hex('#7B68EE'),
-  storagePath: '~/Library/Application Support/Kiro/workspace-sessions/',
-  binaryName: 'kiro',
+  storagePath: '~/.kiro/sessions/cli/ (CLI) · Kiro IDE workspace-sessions',
+  binaryName: 'kiro-cli',
+  binaryFallbacks: ['kiro'],
   parseSessions: parseKiroSessions,
+  supportsCwdLookup: true,
   extractContext: extractKiroContext,
-  nativeResumeArgs: () => [],
-  crossToolArgs: (prompt) => [prompt],
-  resumeCommandDisplay: () => `kiro`,
+  nativeResumeArgs: (s) => ['chat', '--resume-id', s.id],
+  crossToolArgs: (prompt) => ['chat', prompt],
+  resumeCommandDisplay: (s) => `kiro-cli chat --resume-id ${s.id}`,
   mapHandoffFlags: mapKiroFlags,
 });
 

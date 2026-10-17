@@ -295,7 +295,7 @@ describe('E2E: 20 Cross-Tool Conversion Paths', () => {
           droid: 'Factory Droid',
           cursor: 'Cursor AI',
           amp: 'Amp CLI',
-          kiro: 'Kiro IDE',
+          kiro: 'Kiro',
           crush: 'Crush CLI',
           cline: 'Cline',
           'roo-code': 'Roo Code',
