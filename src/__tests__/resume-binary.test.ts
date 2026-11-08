@@ -23,4 +23,12 @@ describe('tool binary resolution', () => {
 
     expect(binaryName).toBeNull();
   });
+
+  it('prefers agy with antigravity as fallback', async () => {
+    expect(getToolBinaryCandidates('antigravity')).toEqual(['agy', 'antigravity']);
+    const preferred = await resolveToolBinaryName('antigravity', async (candidate) => candidate === 'agy');
+    expect(preferred).toBe('agy');
+    const fallback = await resolveToolBinaryName('antigravity', async (candidate) => candidate === 'antigravity');
+    expect(fallback).toBe('antigravity');
+  });
 });

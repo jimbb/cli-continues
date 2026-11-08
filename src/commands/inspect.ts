@@ -46,12 +46,11 @@ function getSessionFormat(source: string, session?: UnifiedSession): SessionForm
     case 'grok':
       return 'jsonl';
     case 'antigravity': {
-      // Antigravity normally stores sessions as protobuf-backed binary
-      // artifacts, but the parser still discovers legacy JSON/JSONL files
-      // (id prefixed `legacy:`). Detect from the file extension so `inspect`
-      // can read raw events for those sessions instead of always reporting
-      // raw analysis as unavailable.
-      if (session && session.id.startsWith('legacy:')) {
+      // Antigravity CLI (agy) stores sessions as JSONL transcripts
+      // (transcript_full.jsonl / transcript.jsonl), and the parser also
+      // discovers legacy JSON/JSONL files (id prefixed `legacy:`). IDE
+      // sessions are protobuf-backed binary/artifact records.
+      if (session) {
         if (session.originalPath.endsWith('.jsonl')) return 'jsonl';
         if (session.originalPath.endsWith('.json')) return 'json';
       }
@@ -272,6 +271,79 @@ function analyzeKiroCliMessages(messages: Array<Record<string, unknown>>): {
           }
         }
       }
+    }
+  }
+
+  return {
+    events: { byType: eventMap, total: messages.length },
+    blocks: {
+      byType: blockMap,
+      total: Array.from(blockMap.values()).reduce((a, b) => a + b, 0),
+    },
+    tools: {
+      byType: toolMap,
+      total: Array.from(toolMap.values()).reduce((a, b) => a + b, 0),
+    },
+    model,
+  };
+}
+
+/**
+ * Analyze raw Antigravity CLI (`agy`) transcript JSONL steps.
+ *
+ * Each line is a step object `{ type: 'USER_INPUT'|'PLANNER_RESPONSE'|'GENERIC'|'SYSTEM_MESSAGE'|'CHECKPOINT', content?, thinking?, tool_calls?: [...] }`.
+ */
+function analyzeAntigravityCliMessages(messages: Array<Record<string, unknown>>): {
+  events: RawEventCounts;
+  blocks: ContentBlockCounts;
+  tools: ToolCategoryCounts;
+  model: string | undefined;
+} {
+  const eventMap = new Map<string, number>();
+  const blockMap = new Map<string, number>();
+  const toolMap = new Map<string, number>();
+  let model: string | undefined;
+
+  for (const msg of messages) {
+    const type = (msg.type as string) || 'unknown';
+    eventMap.set(type, (eventMap.get(type) || 0) + 1);
+
+    if (type === 'USER_INPUT') {
+      const content = typeof msg.content === 'string' ? msg.content : '';
+      if (content.trim()) {
+        blockMap.set('text', (blockMap.get('text') || 0) + 1);
+      }
+      if (!model) {
+        const modelMatch = content.match(/setting\s+`Model Selection`\s+from\s+.+?\s+to\s+([^\n]+?)\.(?:\s|$)/u);
+        if (modelMatch?.[1]) model = modelMatch[1].trim();
+      }
+      continue;
+    }
+
+    if (type === 'PLANNER_RESPONSE') {
+      if (typeof msg.thinking === 'string' && msg.thinking.trim()) {
+        blockMap.set('thinking', (blockMap.get('thinking') || 0) + 1);
+      }
+      if (typeof msg.content === 'string' && msg.content.trim()) {
+        blockMap.set('text', (blockMap.get('text') || 0) + 1);
+      }
+      if (Array.isArray(msg.tool_calls)) {
+        for (const tc of msg.tool_calls as Array<{ name?: string }>) {
+          blockMap.set('tool_use', (blockMap.get('tool_use') || 0) + 1);
+          if (tc.name) {
+            const category = classifyToolName(tc.name);
+            if (category) {
+              const label = CATEGORY_LABELS[category] || category;
+              toolMap.set(label, (toolMap.get(label) || 0) + 1);
+            }
+          }
+        }
+      }
+      continue;
+    }
+
+    if (type === 'GENERIC') {
+      blockMap.set('tool_result', (blockMap.get('tool_result') || 0) + 1);
     }
   }
 
@@ -564,7 +636,13 @@ function renderConversionSummary(
   const ratio = rawInput > 0 ? ((markdownBytes / rawInput) * 100).toFixed(1) : '0.0';
 
   // Count content events (non-progress)
-  const contentEvents = (events.byType.get('assistant') || 0) + (events.byType.get('user') || 0);
+  const contentEvents =
+    (events.byType.get('assistant') || 0) +
+    (events.byType.get('user') || 0) +
+    (events.byType.get('USER_INPUT') || 0) +
+    (events.byType.get('PLANNER_RESPONSE') || 0) +
+    (events.byType.get('Prompt') || 0) +
+    (events.byType.get('AssistantMessage') || 0);
 
   const subagentsCaptured = context.sessionNotes?.subagentResults?.length || 0;
   const reasoningCaptured = context.sessionNotes?.reasoningSteps?.length || 0;
@@ -670,7 +748,13 @@ function renderTruncated(
   const markdownBytes = Buffer.byteLength(context.markdown, 'utf8');
   const rawInput = mainSize + toolResultFiles.reduce((s, f) => s + f.size, 0);
   const ratio = rawInput > 0 ? ((markdownBytes / rawInput) * 100).toFixed(1) : '0.0';
-  const contentEvents = (events.byType.get('assistant') || 0) + (events.byType.get('user') || 0);
+  const contentEvents =
+    (events.byType.get('assistant') || 0) +
+    (events.byType.get('user') || 0) +
+    (events.byType.get('USER_INPUT') || 0) +
+    (events.byType.get('PLANNER_RESPONSE') || 0) +
+    (events.byType.get('Prompt') || 0) +
+    (events.byType.get('AssistantMessage') || 0);
   const subsCaptured = context.sessionNotes?.subagentResults?.length || 0;
   const toolResCaptured = context.sessionNotes?.externalToolResults?.length || 0;
   const reasonCaptured = context.sessionNotes?.reasoningSteps?.length || 0;
@@ -756,9 +840,13 @@ export async function inspectSession(
     rawEventNote = '(raw event analysis not available for binary/artifact-backed sessions)';
   }
 
+  const isAntigravityCliTranscript =
+    session.source === 'antigravity' && !session.id.startsWith('legacy:') && format === 'jsonl';
   const { events, blocks, tools, model } = kiroCliEventPath
     ? analyzeKiroCliMessages(rawMessages)
-    : analyzeRawMessages(rawMessages);
+    : isAntigravityCliTranscript
+      ? analyzeAntigravityCliMessages(rawMessages)
+      : analyzeRawMessages(rawMessages);
 
   // 3. File stats
   const mainFileStats = fs.statSync(rawEventPath);

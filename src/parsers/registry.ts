@@ -891,23 +891,107 @@ register({
   resumeCommandDisplay: () => `code`,
 });
 
-// ── Antigravity ──────────────────────────────────────────────────────
+function mapAntigravityFlags(context: ForwardFlagMapContext): ForwardMapResult {
+  const args: string[] = [];
+  const warnings: string[] = [];
+
+  const autoOccurrences = collectAutoApproveOccurrences(context);
+  const fullAutoOccurrences = context.all('fullAuto');
+  const askOccurrences = context.all('askForApproval');
+  const approvalModeOccurrences = context.all('approvalMode');
+  const permissionModeOccurrences = context.all('permissionMode');
+  const planOccurrences = normalizePlanOccurrences(context);
+  const approvalMode = context.latestString('approvalMode')?.toLowerCase();
+  const askForApproval = context.latestString('askForApproval')?.toLowerCase();
+
+  if (
+    autoOccurrences.length > 0 ||
+    fullAutoOccurrences.length > 0 ||
+    approvalMode === 'yolo' ||
+    askForApproval === 'never'
+  ) {
+    context.consume(
+      ...autoOccurrences,
+      ...fullAutoOccurrences,
+      ...askOccurrences,
+      ...approvalModeOccurrences,
+      ...permissionModeOccurrences,
+      ...planOccurrences,
+      ...context.all('mode'),
+    );
+    args.push('--dangerously-skip-permissions');
+  } else {
+    const explicitMode = context.latestString('mode');
+    if (explicitMode) {
+      context.consumeKeys('mode', 'plan', 'approvalMode', 'permissionMode');
+      args.push('--mode', explicitMode);
+    } else if (planOccurrences.length > 0) {
+      context.consume(...planOccurrences);
+      args.push('--mode', 'plan');
+    } else if (
+      askOccurrences.length > 0 ||
+      approvalModeOccurrences.length > 0 ||
+      permissionModeOccurrences.length > 0
+    ) {
+      context.consume(...askOccurrences, ...approvalModeOccurrences, ...permissionModeOccurrences);
+      warnings.push('Antigravity: --ask-for-approval, --approval-mode, and --permission-mode were ignored.');
+    }
+  }
+
+  const sandbox = context.latest('sandbox');
+  if (sandbox) {
+    const normalized = String(sandbox.value).toLowerCase();
+    if (
+      sandbox.value === true ||
+      ['true', '1', 'yes', 'on', 'enabled', 'workspace-write', 'read-only'].includes(normalized)
+    ) {
+      context.consumeKeys('sandbox');
+      args.push('--sandbox');
+    }
+  }
+
+  const model = context.latestString('model');
+  if (model) {
+    context.consumeKeys('model');
+    args.push('--model', model);
+  }
+
+  for (const directory of context.consumeAllCsvStrings('addDir', 'includeDirectories')) {
+    args.push('--add-dir', directory);
+  }
+
+  const agent = context.latestString('agent');
+  if (agent) {
+    context.consumeKeys('agent');
+    args.push('--agent', agent);
+  }
+
+  return { mappedArgs: args, warnings };
+}
+
+// ── Antigravity (CLI + IDE) ──────────────────────────────────────────
+// Discovers Antigravity CLI (agy) sessions (~/.gemini/antigravity-cli/) and
+// Antigravity IDE sessions (~/.gemini/antigravity/). Native resume targets the
+// CLI via `agy --conversation <id>`; cross-tool handoff launches `agy -i <prompt>`.
 register({
   name: 'antigravity',
   label: 'Antigravity',
   color: chalk.hex('#A8DADC'),
-  storagePath: '~/.gemini/antigravity/',
+  storagePath: '~/.gemini/antigravity-cli/ (CLI) · ~/.gemini/antigravity/ (IDE)',
   envVar: 'ANTIGRAVITY_HOME',
-  // Antigravity's parser falls back to GEMINI_CLI_HOME when ANTIGRAVITY_HOME
-  // is unset, so changes to that var must also invalidate the index cache.
-  extraEnvVars: ['GEMINI_CLI_HOME', 'ANTIGRAVITY_STATE_DB'],
-  binaryName: 'antigravity',
-  binaryFallbacks: ['agy'],
+  // Antigravity's parser also checks ANTIGRAVITY_CLI_HOME, ANTIGRAVITY_APP_DATA_DIR,
+  // GEMINI_CLI_HOME, and ANTIGRAVITY_STATE_DB, so changes to any of those vars
+  // must invalidate the index cache.
+  extraEnvVars: ['ANTIGRAVITY_CLI_HOME', 'ANTIGRAVITY_APP_DATA_DIR', 'GEMINI_CLI_HOME', 'ANTIGRAVITY_STATE_DB'],
+  binaryName: 'agy',
+  binaryFallbacks: ['antigravity'],
   parseSessions: parseAntigravitySessions,
+  supportsCwdLookup: true,
   extractContext: extractAntigravityContext,
-  nativeResumeArgs: () => [],
-  crossToolArgs: (prompt) => [prompt],
-  resumeCommandDisplay: () => `antigravity`,
+  nativeResumeArgs: (s) => ['--conversation', s.id],
+  crossToolArgs: (prompt) => ['-i', prompt],
+  resumeCommandDisplay: (s) => `agy --conversation ${s.id}`,
+  mapHandoffFlags: mapAntigravityFlags,
 });
 
 // ── Kimi CLI ──────────────────────────────────────────────────────────

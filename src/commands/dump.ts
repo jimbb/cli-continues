@@ -9,7 +9,7 @@ import * as path from 'path';
 import type { VerbosityConfig } from '../config/index.js';
 import { getPreset, loadConfig } from '../config/index.js';
 import { ALL_TOOLS, adapters } from '../parsers/registry.js';
-import type { SessionSource, UnifiedSession } from '../types/index.js';
+import { resolveSessionSource, type UnifiedSession } from '../types/index.js';
 import { getAllSessions, getSessionsBySource } from '../utils/index.js';
 
 /**
@@ -32,7 +32,8 @@ export async function dumpCommand(
   try {
     // Validate source
     const isAll = sourceOrAll === 'all';
-    if (!isAll && !ALL_TOOLS.includes(sourceOrAll as SessionSource)) {
+    const resolvedSource = isAll ? undefined : resolveSessionSource(sourceOrAll);
+    if (!isAll && !resolvedSource) {
       console.error(chalk.red(`Invalid source: ${sourceOrAll}`));
       console.error(chalk.gray(`Valid sources: all, ${ALL_TOOLS.join(', ')}`));
       process.exitCode = 1;
@@ -43,10 +44,10 @@ export async function dumpCommand(
     spinner = context.isTTY ? ora('Loading sessions...').start() : null;
 
     let sessions: UnifiedSession[];
-    if (isAll) {
+    if (isAll || !resolvedSource) {
       sessions = await getAllSessions(options.rebuild);
     } else {
-      sessions = await getSessionsBySource(sourceOrAll as SessionSource, options.rebuild);
+      sessions = await getSessionsBySource(resolvedSource, options.rebuild);
     }
 
     if (spinner) spinner.stop();

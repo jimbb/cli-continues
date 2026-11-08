@@ -81,6 +81,7 @@ continues crush         # latest Crush
 continues kimi          # latest Kimi
 continues qwen-code     # latest Qwen Code
 continues grok          # latest Grok Build session
+continues agy           # latest Antigravity (agy) session
 ```
 
 Works for all 17 tools. This uses **native resume** — same tool, full history, no context injection.
@@ -198,7 +199,7 @@ Every tool stores sessions differently — different formats, different schemas,
 | Cline | JSON | VS Code `globalStorage/saoudrizwan.claude-dev/tasks/` |
 | Roo Code | JSON | VS Code `globalStorage/rooveterinaryinc.roo-cline/tasks/` |
 | Kilo Code | JSON | VS Code `globalStorage/kilocode.kilo-code/tasks/` |
-| Antigravity | PB + brain artifacts + optional live RPC | `~/.gemini/antigravity/` |
+| Antigravity | SQLite + JSONL (CLI) · PB + brain artifacts + optional live RPC (IDE) | `~/.gemini/antigravity-cli/` (CLI) · `~/.gemini/antigravity/` (IDE) |
 | Kimi CLI | JSONL + JSON | `~/.kimi/sessions/` |
 | Qwen Code | JSONL | `~/.qwen/projects/*/chats/` |
 

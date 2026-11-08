@@ -573,4 +573,264 @@ describe('Antigravity parser', () => {
     expect(context.recentMessages).toHaveLength(2);
     expect(context.recentMessages[0].content).toBe('Fix the authentication bug');
   });
+
+  it('discovers Antigravity CLI (agy) sessions from conversation_summaries.db and transcript_full.jsonl while skipping subagents and unstarted sessions', async () => {
+    const root = makeRoot();
+    const dbPath = path.join(root, 'conversation_summaries.db');
+    const mainId = '88888888-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const subagentId = '99999999-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const emptyId = '00000000-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+
+    const sqliteModule = require('node:sqlite') as {
+      DatabaseSync: new (database: string) => SqliteDatabase;
+    };
+    const db = new sqliteModule.DatabaseSync(dbPath);
+    try {
+      db.exec(`
+        CREATE TABLE conversation_summaries (
+          conversation_id TEXT PRIMARY KEY,
+          title TEXT,
+          preview TEXT,
+          step_count INTEGER,
+          last_modified_time TEXT,
+          last_user_input_time TEXT,
+          workspace_uris TEXT,
+          parent_conversation_id TEXT,
+          nesting_depth INTEGER
+        )
+      `);
+      const insert = db.prepare(`
+        INSERT INTO conversation_summaries (
+          conversation_id, title, preview, step_count, last_modified_time, last_user_input_time, workspace_uris, parent_conversation_id, nesting_depth
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      insert.run(
+        mainId,
+        'Support Antigravity CLI',
+        'Add agy support',
+        6,
+        '2026-11-08 16:35:57.176310398+00:00',
+        '0001-01-01 00:00:00+00:00',
+        JSON.stringify(['file:///home/user/cli-continues']),
+        '',
+        0,
+      );
+      insert.run(
+        subagentId,
+        'Research subagent',
+        'Inspect files',
+        4,
+        '2026-11-08 16:36:00+00:00',
+        '2026-11-08 16:35:58+00:00',
+        JSON.stringify(['file:///home/user/cli-continues']),
+        mainId,
+        1,
+      );
+      insert.run(
+        emptyId,
+        '',
+        '',
+        0,
+        '0001-01-01 00:00:00+00:00',
+        '0001-01-01 00:00:00+00:00',
+        JSON.stringify(['file:///home/user/cli-continues']),
+        '',
+        0,
+      );
+    } finally {
+      db.close();
+    }
+
+    const mainTranscript = path.join(root, 'brain', mainId, '.system_generated', 'logs', 'transcript_full.jsonl');
+    writeFile(
+      mainTranscript,
+      [
+        JSON.stringify({
+          step_index: 0,
+          source: 'USER_EXPLICIT',
+          type: 'USER_INPUT',
+          status: 'DONE',
+          created_at: '2026-11-08T16:30:00Z',
+          content:
+            '<USER_REQUEST>\nhave it support agy as well\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nlocal time\n</ADDITIONAL_METADATA>\n<USER_SETTINGS_CHANGE>\nThe user changed setting `Model Selection` from Gemini 3 Flash to Claude Opus 4.6 (Thinking). Briefly acknowledge the change.\n</USER_SETTINGS_CHANGE>',
+        }),
+        JSON.stringify({
+          step_index: 1,
+          source: 'MODEL',
+          type: 'PLANNER_RESPONSE',
+          status: 'DONE',
+          created_at: '2026-11-08T16:31:00Z',
+          content: 'I will add agy support.',
+          thinking: 'Checking parser architecture.',
+        }),
+      ].join('\n'),
+    );
+
+    // Subagent also has a brain transcript on disk, which must be ignored
+    writeFile(
+      path.join(root, 'brain', subagentId, '.system_generated', 'logs', 'transcript_full.jsonl'),
+      JSON.stringify({
+        step_index: 0,
+        source: 'USER_EXPLICIT',
+        type: 'USER_INPUT',
+        status: 'DONE',
+        created_at: '2026-11-08T16:35:58Z',
+        content: '<USER_REQUEST>\nsubagent task\n</USER_REQUEST>',
+      }),
+    );
+
+    // Empty session has an empty logs dir
+    fs.mkdirSync(path.join(root, 'brain', emptyId, '.system_generated', 'logs'), { recursive: true });
+
+    const sessions = await parseAntigravitySessions();
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      id: mainId,
+      source: 'antigravity',
+      cwd: '/home/user/cli-continues',
+      repo: 'user/cli-continues',
+      summary: 'Support Antigravity CLI',
+      lines: 6,
+      model: 'Claude Opus 4.6 (Thinking)',
+      originalPath: mainTranscript,
+    });
+    expect(sessions[0].createdAt.toISOString()).toBe('2026-11-08T16:30:00.000Z');
+    expect(sessions[0].updatedAt.toISOString()).toBe('2026-11-08T16:35:57.176Z');
+
+    // Verify cwd filtering works
+    const matchingCwd = await parseAntigravitySessions({ cwd: '/home/user/cli-continues' });
+    expect(matchingCwd).toHaveLength(1);
+    const nonMatchingCwd = await parseAntigravitySessions({ cwd: '/home/user/other-repo' });
+    expect(nonMatchingCwd).toHaveLength(0);
+  });
+
+  it('extracts messages, tool summaries, modified files, token usage, and checkpoint summaries from agy CLI transcripts without launching the IDE', async () => {
+    const root = makeRoot();
+    const id = '12121212-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const transcriptPath = path.join(root, 'brain', id, '.system_generated', 'logs', 'transcript.jsonl');
+
+    writeFile(
+      path.join(root, 'history.jsonl'),
+      `${JSON.stringify({
+        display: 'Implement agy parser',
+        timestamp: 1794150244421,
+        workspace: '/home/user/cli-continues',
+        conversationId: id,
+      })}\n`,
+    );
+
+    writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          step_index: 0,
+          source: 'USER_EXPLICIT',
+          type: 'USER_INPUT',
+          status: 'DONE',
+          created_at: '2026-11-08T14:38:26Z',
+          content:
+            '<USER_REQUEST>\nImplement agy parser and tests\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nOS: linux\n</ADDITIONAL_METADATA>',
+        }),
+        JSON.stringify({
+          step_index: 1,
+          source: 'MODEL',
+          type: 'PLANNER_RESPONSE',
+          status: 'DONE',
+          created_at: '2026-11-08T14:38:30Z',
+          thinking: 'Let us inspect the existing antigravity parser and edit it.',
+          content: 'I will inspect and update the parser.\n- [ ] Add unit tests for agy CLI',
+          input_tokens: 1200,
+          cache_read_tokens: 800,
+          output_tokens: 150,
+          tool_calls: [
+            {
+              id: 'tc-1',
+              name: 'read_file',
+              args: { Path: '"/home/user/cli-continues/src/parsers/antigravity.ts"', StartLine: '1', EndLine: '50' },
+            },
+            {
+              id: 'tc-2',
+              name: 'edit_file',
+              args: {
+                Path: '"/home/user/cli-continues/src/parsers/antigravity.ts"',
+                Target: '"old"',
+                Replacement: '"new\\nline"',
+              },
+            },
+            {
+              id: 'tc-3',
+              name: 'run_command',
+              args: { CommandLine: '"npx vitest run"', WaitMsBeforeAsync: '5000' },
+            },
+          ],
+        }),
+        JSON.stringify({
+          step_index: 2,
+          source: 'MODEL',
+          type: 'GENERIC',
+          status: 'DONE',
+          created_at: '2026-11-08T14:38:31Z',
+          content: 'Showing lines 1-50 of 100',
+        }),
+        JSON.stringify({
+          step_index: 3,
+          source: 'MODEL',
+          type: 'GENERIC',
+          status: 'DONE',
+          created_at: '2026-11-08T14:38:32Z',
+          content: 'Edited file:///home/user/cli-continues/src/parsers/antigravity.ts (+2/-1 lines)',
+        }),
+        JSON.stringify({
+          step_index: 4,
+          source: 'MODEL',
+          type: 'GENERIC',
+          status: 'DONE',
+          created_at: '2026-11-08T14:38:35Z',
+          content: 'Command exited with code 0.\n\nCommand output:\nTests 14 passed (14)',
+        }),
+        JSON.stringify({
+          step_index: 5,
+          source: 'SYSTEM',
+          type: 'CHECKPOINT',
+          status: 'DONE',
+          created_at: '2026-11-08T14:39:00Z',
+          input_tokens: 500,
+          output_tokens: 100,
+          content: '<summary>\nCompleted initial agy parser changes.\n</summary>',
+        }),
+      ].join('\n'),
+    );
+
+    // Even with auto-launch enabled, CLI transcript sessions must never spawn the IDE
+    vi.stubEnv('ANTIGRAVITY_DISABLE_RPC', '');
+    vi.stubEnv('CONTINUES_LAUNCH_ANTIGRAVITY', '1');
+    setStdoutTty(true);
+
+    const sessions = await parseAntigravitySessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].cwd).toBe('/home/user/cli-continues');
+
+    const context = await extractAntigravityContext(sessions[0]);
+
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(context.recentMessages).toHaveLength(2);
+    expect(context.recentMessages[0]).toMatchObject({
+      role: 'user',
+      content: 'Implement agy parser and tests',
+    });
+    expect(context.recentMessages[1].role).toBe('assistant');
+    expect(context.recentMessages[1].toolCalls).toHaveLength(3);
+    expect(context.filesModified).toEqual(['/home/user/cli-continues/src/parsers/antigravity.ts']);
+    expect(context.pendingTasks).toEqual(['Add unit tests for agy CLI']);
+    expect(context.sessionNotes?.reasoning).toEqual(['Let us inspect the existing antigravity parser and edit it.']);
+    expect(context.sessionNotes?.compactSummary).toBe('Completed initial agy parser changes.');
+    expect(context.sessionNotes?.tokenUsage).toEqual({ input: 1700, output: 250 });
+    expect(context.sessionNotes?.cacheTokens).toEqual({ creation: 0, read: 800 });
+
+    const summaryNames = context.toolSummaries.map((s) => s.name);
+    expect(summaryNames).toContain('Read');
+    expect(summaryNames).toContain('Edit');
+    expect(summaryNames).toContain('Bash');
+  });
 });

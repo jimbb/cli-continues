@@ -4,7 +4,7 @@ import { showBanner } from '../display/banner.js';
 import { formatSessionForSelect, sourceColors } from '../display/format.js';
 import { showNoSessionsHelp } from '../display/help.js';
 import { maybePromptGithubStar } from '../display/star-prompt.js';
-import type { SessionSource, UnifiedSession } from '../types/index.js';
+import { resolveSessionSource, type SessionSource, type UnifiedSession } from '../types/index.js';
 import type { HandoffForwardingOptions } from '../utils/forward-flags.js';
 import { getAllSessions, getSessionsByCwd, getSessionsBySource } from '../utils/index.js';
 import { getResumeCommand, nativeResume, resolveCrossToolForwarding, resume } from '../utils/resume.js';
@@ -64,7 +64,8 @@ export async function interactivePick(
     const s = clack.spinner();
     s.start('Loading sessions...');
     if (options.source) {
-      sessions = await getSessionsBySource(options.source as SessionSource, options.rebuild);
+      const source = resolveSessionSource(options.source) ?? (options.source as SessionSource);
+      sessions = await getSessionsBySource(source, options.rebuild);
       cwdSessions = options.all ? [] : sessions.filter((sess) => matchesCwd(sess.cwd, currentDir));
     } else {
       cwdSessions = options.all ? [] : await getSessionsByCwd(currentDir, options.rebuild);

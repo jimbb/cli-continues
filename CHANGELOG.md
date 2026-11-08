@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Antigravity CLI (`agy`) session support** — the `antigravity` source now
+  discovers and parses Antigravity CLI sessions stored under
+  `~/.gemini/antigravity-cli/` (`conversation_summaries.db`, `history.jsonl`,
+  and `brain/<id>/.system_generated/logs/transcript_full.jsonl` /
+  `transcript.jsonl`), alongside Antigravity IDE sessions. Full conversation
+  messages, `<USER_SETTINGS_CHANGE>` model selection, reasoning blocks,
+  categorised tool activity (shell/read/write/edit/grep/glob/search/task/ask),
+  modified files, token/cache usage, and compaction checkpoints are extracted
+  offline without launching the IDE.
+- **`agy` CLI alias** — `continues agy [n]`, `--source agy`, `--in agy`,
+  `continues dump agy <dir>`, and `CONTINUES_AGY_ARGS` are accepted as aliases
+  for `antigravity`.
 - **Kiro CLI session support** — the `kiro` source now parses real Kiro CLI
   sessions stored under `~/.kiro/sessions/cli/` (persisted `Prompt` /
   `AssistantMessage` / `ToolResults` JSONL records with `text`/`thinking`/
@@ -18,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The `antigravity` adapter now prefers the `agy` binary (falling back to
+  `antigravity`), performs native resume via `agy --conversation <id>`,
+  launches cross-tool handoffs with `agy -i <prompt>`, and maps auto-approve,
+  plan/mode, sandbox, model, add-dir, and agent flags onto `agy`.
 - The `kiro` adapter now does native resume via `kiro-cli chat --resume-id
   <id>` (binary `kiro-cli`, falling back to `kiro`) and launches cross-tool
   handoffs with `kiro-cli chat <prompt>`. Its label is now "Kiro" (covering

@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { formatSessionColored } from '../display/format.js';
 import { showNoSessionsHelp } from '../display/help.js';
-import type { SessionSource, UnifiedSession } from '../types/index.js';
+import { resolveSessionSource, type SessionSource, type UnifiedSession } from '../types/index.js';
 import { getAllSessions, getSessionsBySource, sessionsToJsonl } from '../utils/index.js';
 
 /**
@@ -18,7 +18,8 @@ export async function listCommand(
 
     let sessions: UnifiedSession[];
     if (options.source) {
-      sessions = await getSessionsBySource(options.source as SessionSource, options.rebuild);
+      const source = resolveSessionSource(options.source) ?? (options.source as SessionSource);
+      sessions = await getSessionsBySource(source, options.rebuild);
     } else {
       sessions = await getAllSessions(options.rebuild);
     }

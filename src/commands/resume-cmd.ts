@@ -2,7 +2,7 @@ import * as clack from '@clack/prompts';
 import chalk from 'chalk';
 import ora from 'ora';
 import { formatSessionColored } from '../display/format.js';
-import { isSessionSource, type SessionSource, TOOL_NAMES } from '../types/index.js';
+import { resolveSessionSource, type SessionSource, TOOL_NAMES } from '../types/index.js';
 import type { HandoffForwardingOptions } from '../utils/forward-flags.js';
 import { findSession, formatSession, getAllSessions } from '../utils/index.js';
 import { getResumeCommand, resolveCrossToolForwarding, resume } from '../utils/resume.js';
@@ -54,7 +54,8 @@ export async function resumeCommand(
       return;
     }
 
-    if (options.in && !isSessionSource(options.in)) {
+    const target: SessionSource | undefined = options.in ? resolveSessionSource(options.in) : undefined;
+    if (options.in && !target) {
       console.error(
         chalk.red('Error:'),
         `Unknown target tool: ${options.in}. Expected one of: ${TOOL_NAMES.join(', ')}.`,
@@ -62,8 +63,6 @@ export async function resumeCommand(
       process.exitCode = 1;
       return;
     }
-
-    const target: SessionSource | undefined = options.in && isSessionSource(options.in) ? options.in : undefined;
     const mode = options.reference ? ('reference' as const) : ('inline' as const);
     const contextOptions = {
       preset: options.preset,

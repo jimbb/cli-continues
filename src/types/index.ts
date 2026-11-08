@@ -7,7 +7,13 @@ import type { SessionSource } from './tool-names.js';
 
 // Re-export shared content block types
 export type { ContentBlock, TextBlock, ThinkingBlock, ToolResultBlock, ToolUseBlock } from './content-blocks.js';
-export { isSessionSource, type SessionSource, TOOL_NAMES, type ToolSampleCategory } from './tool-names.js';
+export {
+  isSessionSource,
+  resolveSessionSource,
+  type SessionSource,
+  TOOL_NAMES,
+  type ToolSampleCategory,
+} from './tool-names.js';
 
 /** Unified session metadata */
 export interface UnifiedSession {

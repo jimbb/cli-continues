@@ -265,12 +265,15 @@ program
 // Quick resume commands for each tool — generated from the adapter registry
 for (const tool of ALL_TOOLS) {
   const adapter = adapters[tool];
-  program
+  const cmd = program
     .command(`${tool} [n]`)
     .description(`Resume Nth newest ${adapter.label} session (default: 1)`)
     .action(async (n = '1') => {
       await resumeBySource(tool, parseInt(n, 10));
     });
+  if (tool === 'antigravity') {
+    cmd.alias('agy');
+  }
 }
 
 // Parse and run

@@ -31,12 +31,19 @@ export interface HandoffContextOptions {
 export function configuredToolArgs(tool: SessionSource): string[] {
   // ponytail: whitespace split, no quoting; add a shell-words parser if someone needs spaces inside an arg
   const variable = `CONTINUES_${tool.toUpperCase().replace(/-/g, '_')}_ARGS`;
-  const raw = process.env[variable]?.trim();
+  const raw =
+    process.env[variable]?.trim() || (tool === 'antigravity' ? process.env.CONTINUES_AGY_ARGS?.trim() : undefined);
+  const activeVar =
+    !process.env[variable]?.trim() && tool === 'antigravity' && process.env.CONTINUES_AGY_ARGS?.trim()
+      ? 'CONTINUES_AGY_ARGS'
+      : variable;
   // Windows shims run through cmd.exe even when spawn receives an argv array.
   // Reject operators, expansion, quoting, and command separators, without
   // echoing the value (which may contain private paths or credentials).
   if (IS_WINDOWS && raw && /[&|<>^%!"`\r\n]/.test(raw)) {
-    throw new ContinuesError(`${variable} must use plain whitespace-separated arguments without Windows shell syntax.`);
+    throw new ContinuesError(
+      `${activeVar} must use plain whitespace-separated arguments without Windows shell syntax.`,
+    );
   }
   return raw ? raw.split(/\s+/) : [];
 }
@@ -204,11 +211,7 @@ export async function crossToolResume(
   const resolved = resolveCrossToolForwarding(target, forwarding);
   const launchArgs = [...configured, ...resolved.extraArgs];
   const defaultInitArgs = getDefaultHandoffInitArgs(target, launchArgs);
-  await runCommand(
-    binaryName,
-    [...defaultInitArgs, ...launchArgs, ...adapter.crossToolArgs(prompt, cwd)],
-    cwd,
-  );
+  await runCommand(binaryName, [...defaultInitArgs, ...launchArgs, ...adapter.crossToolArgs(prompt, cwd)], cwd);
 }
 
 /**

@@ -31,6 +31,17 @@ export function isSessionSource(value: string): value is SessionSource {
   return (TOOL_NAMES as readonly string[]).includes(value);
 }
 
+/** CLI aliases that resolve to a canonical SessionSource (e.g. `agy` -> `antigravity`). */
+const TOOL_ALIASES: Readonly<Record<string, SessionSource>> = Object.freeze({
+  agy: 'antigravity',
+});
+
+export function resolveSessionSource(value: string): SessionSource | undefined {
+  const normalized = value.trim().toLowerCase();
+  if (isSessionSource(normalized)) return normalized;
+  return TOOL_ALIASES[normalized];
+}
+
 // ── Canonical Tool Name Sets ────────────────────────────────────────────────
 // Used by all parsers to classify tool invocations consistently.
 // Each set contains all known aliases for a tool category across every CLI.
@@ -42,6 +53,7 @@ export const SHELL_TOOLS: ReadonlySet<string> = new Set([
   'terminal',
   'run_terminal_command',
   'run_shell_command',
+  'run_command',
   'Shell',
   'shell',
   'exec_command',
@@ -50,13 +62,14 @@ export const SHELL_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 /** File read tools */
-export const READ_TOOLS: ReadonlySet<string> = new Set(['Read', 'ReadFile', 'read_file', 'read']);
+export const READ_TOOLS: ReadonlySet<string> = new Set(['Read', 'ReadFile', 'read_file', 'view_file', 'read']);
 
 /** File write/create tools */
 export const WRITE_TOOLS: ReadonlySet<string> = new Set([
   'Write',
   'WriteFile',
   'write_file',
+  'write_to_file',
   'Create',
   'create',
   'create_file',
@@ -68,6 +81,8 @@ export const EDIT_TOOLS: ReadonlySet<string> = new Set([
   'Edit',
   'EditFile',
   'edit_file',
+  'replace_file_content',
+  'multi_replace_file_content',
   'edit',
   'apply_diff',
   'apply_patch',
@@ -95,6 +110,7 @@ export const GLOB_TOOLS: ReadonlySet<string> = new Set([
   'list_directory',
   'ListFiles',
   'file_search',
+  'find_by_name',
   'LS',
   'FindFiles',
   'ReadFolder',
@@ -106,6 +122,7 @@ export const SEARCH_TOOLS: ReadonlySet<string> = new Set([
   'WebSearch',
   'web_search',
   'web_search_call',
+  'search_web',
   'x_keyword_search',
 ]);
 
@@ -113,13 +130,18 @@ export const SEARCH_TOOLS: ReadonlySet<string> = new Set([
 export const FETCH_TOOLS: ReadonlySet<string> = new Set(['WebFetch', 'web_fetch']);
 
 /** Subagent/task tools */
-export const TASK_TOOLS: ReadonlySet<string> = new Set(['Task', 'task', 'Agent', 'spawn_subagent']);
+export const TASK_TOOLS: ReadonlySet<string> = new Set(['Task', 'task', 'Agent', 'spawn_subagent', 'invoke_subagent']);
 
 /** Task output tools */
 export const TASK_OUTPUT_TOOLS: ReadonlySet<string> = new Set(['TaskOutput']);
 
 /** User interaction tools */
-export const ASK_TOOLS: ReadonlySet<string> = new Set(['AskUserQuestion', 'request_user_input', 'ask_user_question']);
+export const ASK_TOOLS: ReadonlySet<string> = new Set([
+  'AskUserQuestion',
+  'request_user_input',
+  'ask_user_question',
+  'ask_question',
+]);
 
 /** Tools to skip — internal bookkeeping, no useful handoff context */
 export const SKIP_TOOLS: ReadonlySet<string> = new Set([
@@ -134,6 +156,11 @@ export const SKIP_TOOLS: ReadonlySet<string> = new Set([
   'lsp',
   'update_plan',
   'view_image',
+  'manage_task',
+  'manage_subagents',
+  'define_subagent',
+  'send_message',
+  'schedule',
 ]);
 
 // ── Tool Sample Classification ──────────────────────────────────────────────

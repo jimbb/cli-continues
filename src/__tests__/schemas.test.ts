@@ -37,7 +37,15 @@ import {
   SqliteSessionRowSchema,
 } from '../types/schemas.js';
 import type { SessionSource } from '../types/tool-names.js';
-import { EDIT_TOOLS, READ_TOOLS, SHELL_TOOLS, TOOL_NAMES, WRITE_TOOLS } from '../types/tool-names.js';
+import {
+  classifyToolName,
+  EDIT_TOOLS,
+  READ_TOOLS,
+  resolveSessionSource,
+  SHELL_TOOLS,
+  TOOL_NAMES,
+  WRITE_TOOLS,
+} from '../types/tool-names.js';
 
 // ── tool-names.ts ────────────────────────────────────────────────────────────
 
@@ -96,6 +104,23 @@ describe('Canonical tool name sets', () => {
     expect(EDIT_TOOLS.has('apply_diff')).toBe(true);
     expect(EDIT_TOOLS.has('mcp__morph__edit_file')).toBe(true);
     expect(EDIT_TOOLS.has('morph___edit_file')).toBe(true);
+  });
+
+  it('resolves agy alias to antigravity and classifies Antigravity CLI tool names', () => {
+    expect(resolveSessionSource('agy')).toBe('antigravity');
+    expect(resolveSessionSource('AGY')).toBe('antigravity');
+    expect(resolveSessionSource('antigravity')).toBe('antigravity');
+    expect(resolveSessionSource('unknown')).toBeUndefined();
+
+    expect(classifyToolName('run_command')).toBe('shell');
+    expect(classifyToolName('view_file')).toBe('read');
+    expect(classifyToolName('write_to_file')).toBe('write');
+    expect(classifyToolName('replace_file_content')).toBe('edit');
+    expect(classifyToolName('search_web')).toBe('search');
+    expect(classifyToolName('find_by_name')).toBe('glob');
+    expect(classifyToolName('invoke_subagent')).toBe('task');
+    expect(classifyToolName('ask_question')).toBe('ask');
+    expect(classifyToolName('manage_task')).toBeUndefined();
   });
 });
 

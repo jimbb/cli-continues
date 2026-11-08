@@ -108,6 +108,39 @@ describe('cross-tool forwarding', () => {
     expect(resolved.passthroughArgs).toEqual([]);
   });
 
+  it('maps antigravity (agy) auto-approve, mode, sandbox, model, add-dir, and agent flags', () => {
+    const yoloResolved = resolveCrossToolForwarding('antigravity', {
+      rawArgs: [
+        '--yolo',
+        '--sandbox',
+        'workspace-write',
+        '--model',
+        'claude-opus-4-6',
+        '--add-dir',
+        '/tmp/shared',
+        '--agent',
+        'research',
+      ],
+    });
+
+    expect(yoloResolved.mappedArgs).toEqual([
+      '--dangerously-skip-permissions',
+      '--sandbox',
+      '--model',
+      'claude-opus-4-6',
+      '--add-dir',
+      '/tmp/shared',
+      '--agent',
+      'research',
+    ]);
+    expect(yoloResolved.passthroughArgs).toEqual([]);
+
+    const planResolved = resolveCrossToolForwarding('antigravity', {
+      rawArgs: ['--plan'],
+    });
+    expect(planResolved.mappedArgs).toEqual(['--mode', 'plan']);
+  });
+
   it('maps crush ask-for-approval never into --yolo', () => {
     const resolved = resolveCrossToolForwarding('crush', {
       rawArgs: ['--ask-for-approval', 'never'],
@@ -325,6 +358,17 @@ describe('cross-tool forwarding', () => {
     expect(adapters.droid.nativeResumeArgs(droidSession)).toEqual(['--resume', 'droid-session-id']);
     expect(adapters.droid.resumeCommandDisplay(droidSession)).toBe('droid --resume droid-session-id');
     expect(getResumeCommand(droidSession)).toBe('droid --resume droid-session-id');
+
+    const agySession: UnifiedSession = {
+      ...codexSession,
+      id: 'agy-session-id',
+      source: 'antigravity',
+      originalPath: '/tmp/transcript_full.jsonl',
+    };
+    expect(adapters.antigravity.nativeResumeArgs(agySession)).toEqual(['--conversation', 'agy-session-id']);
+    expect(adapters.antigravity.crossToolArgs('handoff prompt', '/tmp/project')).toEqual(['-i', 'handoff prompt']);
+    expect(adapters.antigravity.resumeCommandDisplay(agySession)).toBe('agy --conversation agy-session-id');
+    expect(getResumeCommand(agySession)).toBe('agy --conversation agy-session-id');
   });
 
   it('rejects invalid runtime targets before formatting forwarding commands', () => {

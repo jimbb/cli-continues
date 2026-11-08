@@ -12,13 +12,41 @@ import type {
   ConversationMessage,
   SessionContext,
   SessionNotes,
+  SessionParseOptions,
   SessionSource,
+  ToolCall,
   UnifiedSession,
 } from '../types/index.js';
+import {
+  ASK_TOOLS,
+  EDIT_TOOLS,
+  FETCH_TOOLS,
+  GLOB_TOOLS,
+  GREP_TOOLS,
+  READ_TOOLS,
+  SEARCH_TOOLS,
+  SHELL_TOOLS,
+  SKIP_TOOLS,
+  TASK_TOOLS,
+  WRITE_TOOLS,
+} from '../types/tool-names.js';
 import { countDiffStats } from '../utils/diff.js';
 import { generateHandoffMarkdown } from '../utils/markdown.js';
 import { cleanSummary, extractRepoFromCwd, homeDir, trimMessages } from '../utils/parser-helpers.js';
-import { fileSummary, mcpSummary, SummaryCollector, shellSummary, truncate } from '../utils/tool-summarizer.js';
+import { matchesCwd } from '../utils/slug.js';
+import {
+  extractExitCode,
+  fetchSummary,
+  fileSummary,
+  globSummary,
+  grepSummary,
+  mcpSummary,
+  SummaryCollector,
+  searchSummary,
+  shellSummary,
+  subagentSummary,
+  truncate,
+} from '../utils/tool-summarizer.js';
 
 const SOURCE_NAME: SessionSource = 'antigravity';
 const SUMMARY_STATE_KEYS = ['antigravityUnifiedStateSync.trajectorySummaries', 'unifiedStateSync.trajectorySummaries'];
@@ -45,6 +73,7 @@ function getLaunchTimeoutMs(): number {
 
 interface SqlitePreparedStatement {
   get(...params: unknown[]): unknown | undefined;
+  all(...params: unknown[]): unknown[];
 }
 
 interface SqliteDatabase {
@@ -69,9 +98,22 @@ interface AntigravityRecord {
   id: string;
   conversationPath?: string;
   brainDir?: string;
+  transcriptPath?: string;
+  compactTranscriptPath?: string;
   legacyPath?: string;
   state?: StateSummary;
+  cli?: StateSummary;
   live?: LiveSummary;
+  isSubagent?: boolean;
+}
+
+interface TranscriptMetadata {
+  stepCount: number;
+  firstUserPrompt?: string;
+  model?: string;
+  createdAt?: Date;
+  updatedAt?: Date;
+  cwd?: string;
 }
 
 interface AntigravityEntry {
@@ -122,25 +164,34 @@ function expandHome(value: string): string {
   return value;
 }
 
+function getAntigravityRoots(): string[] {
+  const explicitHome = process.env.ANTIGRAVITY_HOME?.trim();
+  const explicitCliHome = process.env.ANTIGRAVITY_CLI_HOME?.trim();
+  if (explicitHome || explicitCliHome) {
+    return Array.from(new Set([explicitHome, explicitCliHome].filter(isNonEmptyString).map((dir) => expandHome(dir))));
+  }
+
+  const geminiHome = process.env.GEMINI_CLI_HOME?.trim();
+  if (geminiHome) {
+    const resolved = expandHome(geminiHome);
+    const baseName = path.basename(resolved);
+    if (baseName === 'antigravity' || baseName === 'antigravity-cli') {
+      return [resolved];
+    }
+    return [path.join(resolved, '.gemini', 'antigravity-cli'), path.join(resolved, '.gemini', 'antigravity')];
+  }
+
+  const appDataDir = process.env.ANTIGRAVITY_APP_DATA_DIR?.trim();
+  const defaults = [
+    ...(appDataDir ? [expandHome(appDataDir)] : []),
+    path.join(homeDir(), '.gemini', 'antigravity-cli'),
+    path.join(homeDir(), '.gemini', 'antigravity'),
+  ];
+  return Array.from(new Set(defaults));
+}
+
 function getAntigravityRoot(): string {
-  const explicit = process.env.ANTIGRAVITY_HOME?.trim();
-  if (explicit) return expandHome(explicit);
-
-  const configuredHome = process.env.GEMINI_CLI_HOME || homeDir();
-  if (path.basename(configuredHome) === 'antigravity') return configuredHome;
-  return path.join(configuredHome, '.gemini', 'antigravity');
-}
-
-function getConversationsDir(): string {
-  return path.join(getAntigravityRoot(), 'conversations');
-}
-
-function getBrainDir(): string {
-  return path.join(getAntigravityRoot(), 'brain');
-}
-
-function getCodeTrackerDir(): string {
-  return path.join(getAntigravityRoot(), 'code_tracker');
+  return getAntigravityRoots()[0] ?? path.join(homeDir(), '.gemini', 'antigravity');
 }
 
 function getStateDbPaths(): string[] {
@@ -195,7 +246,13 @@ function validDate(value: Date | undefined): Date | undefined {
 
 function parseTimestamp(value: string | undefined, fallback?: Date): Date | undefined {
   if (!value) return fallback;
-  return validDate(new Date(value)) ?? fallback;
+  const trimmed = value.trim();
+  // Go's zero time.Time serializes as "0001-01-01 00:00:00+00:00", which V8's
+  // Date parser misinterprets as year 2001. Reject year 0000/0001 timestamps.
+  if (!trimmed || /^000[01]-01-01/u.test(trimmed)) return fallback;
+  const parsed = validDate(new Date(trimmed));
+  if (!parsed || parsed.getTime() <= 0) return fallback;
+  return parsed;
 }
 
 function dateFromEpoch(value: number | undefined): Date | undefined {
@@ -261,6 +318,28 @@ function normalizeCwd(value: string | undefined): string | undefined {
   return value;
 }
 
+function parseWorkspaceUris(raw: unknown): string | undefined {
+  if (!isNonEmptyString(raw)) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (isNonEmptyString(item)) {
+            const cwd = normalizeCwd(item.trim());
+            if (cwd) return cwd;
+          }
+        }
+      }
+    } catch (err) {
+      logger.debug('antigravity: failed to parse workspace_uris JSON', err);
+    }
+    return undefined;
+  }
+  return normalizeCwd(trimmed);
+}
+
 function trimAtControlCharacter(value: string): string {
   for (let index = 0; index < value.length; index += 1) {
     if (value.charCodeAt(index) < 32) return value.slice(0, index);
@@ -274,12 +353,34 @@ function addRecord(records: Map<string, AntigravityRecord>, id: string, patch: P
   records.set(id, { ...existing, ...patch, id });
 }
 
+function mergeCliSummary(existing: StateSummary | undefined, patch: StateSummary): StateSummary {
+  if (!existing) return patch;
+  const createdAt =
+    existing.createdAt && patch.createdAt
+      ? new Date(Math.min(existing.createdAt.getTime(), patch.createdAt.getTime()))
+      : (existing.createdAt ?? patch.createdAt);
+  const updatedAt =
+    existing.updatedAt && patch.updatedAt
+      ? new Date(Math.max(existing.updatedAt.getTime(), patch.updatedAt.getTime()))
+      : (existing.updatedAt ?? patch.updatedAt);
+  return {
+    id: existing.id,
+    ...((existing.title ?? patch.title) ? { title: existing.title ?? patch.title } : {}),
+    ...((existing.cwd ?? patch.cwd) ? { cwd: existing.cwd ?? patch.cwd } : {}),
+    ...(createdAt ? { createdAt } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
+    ...((existing.stepCount ?? patch.stepCount) ? { stepCount: existing.stepCount ?? patch.stepCount } : {}),
+  };
+}
+
 async function discoverConversationRecords(records: Map<string, AntigravityRecord>): Promise<void> {
-  const conversationsDir = getConversationsDir();
-  for (const entry of await readDirSafe(conversationsDir)) {
-    if (!entry.isFile() || !entry.name.endsWith('.pb')) continue;
-    const id = path.basename(entry.name, '.pb');
-    addRecord(records, id, { conversationPath: path.join(conversationsDir, entry.name) });
+  for (const root of getAntigravityRoots()) {
+    const conversationsDir = path.join(root, 'conversations');
+    for (const entry of await readDirSafe(conversationsDir)) {
+      if (!entry.isFile() || !entry.name.endsWith('.pb')) continue;
+      const id = path.basename(entry.name, '.pb');
+      addRecord(records, id, { conversationPath: path.join(conversationsDir, entry.name) });
+    }
   }
 }
 
@@ -308,13 +409,135 @@ async function hasBrainArtifacts(dirPath: string): Promise<boolean> {
   return false;
 }
 
+async function findTranscriptPaths(
+  brainDir: string,
+): Promise<{ transcriptPath: string; compactTranscriptPath: string } | undefined> {
+  const logsDir = path.join(brainDir, '.system_generated', 'logs');
+  const fullPath = path.join(logsDir, 'transcript_full.jsonl');
+  const compactPath = path.join(logsDir, 'transcript.jsonl');
+  const hasFull = await exists(fullPath);
+  const hasCompact = await exists(compactPath);
+  if (!hasFull && !hasCompact) return undefined;
+  return {
+    transcriptPath: hasFull ? fullPath : compactPath,
+    compactTranscriptPath: hasCompact ? compactPath : fullPath,
+  };
+}
+
 async function discoverBrainRecords(records: Map<string, AntigravityRecord>): Promise<void> {
-  const brainDir = getBrainDir();
-  for (const entry of await readDirSafe(brainDir)) {
-    if (!entry.isDirectory()) continue;
-    const dirPath = path.join(brainDir, entry.name);
-    if (!UUIDISH_RE.test(entry.name) && !(await hasBrainArtifacts(dirPath))) continue;
-    addRecord(records, entry.name, { brainDir: dirPath });
+  for (const root of getAntigravityRoots()) {
+    const brainDir = path.join(root, 'brain');
+    for (const entry of await readDirSafe(brainDir)) {
+      if (!entry.isDirectory()) continue;
+      const dirPath = path.join(brainDir, entry.name);
+      const transcripts = await findTranscriptPaths(dirPath);
+      if (transcripts) {
+        addRecord(records, entry.name, {
+          brainDir: dirPath,
+          transcriptPath: transcripts.transcriptPath,
+          compactTranscriptPath: transcripts.compactTranscriptPath,
+        });
+        continue;
+      }
+      if (!UUIDISH_RE.test(entry.name) && !(await hasBrainArtifacts(dirPath))) continue;
+      addRecord(records, entry.name, { brainDir: dirPath });
+    }
+  }
+}
+
+async function discoverCliSummaryRecords(records: Map<string, AntigravityRecord>): Promise<void> {
+  for (const root of getAntigravityRoots()) {
+    const dbPath = path.join(root, 'conversation_summaries.db');
+    if (fs.existsSync(dbPath)) {
+      const handle = openDb(dbPath);
+      if (handle) {
+        try {
+          const rows = handle.db
+            .prepare(
+              `SELECT
+                 conversation_id,
+                 title,
+                 preview,
+                 step_count,
+                 last_modified_time,
+                 last_user_input_time,
+                 workspace_uris,
+                 parent_conversation_id,
+                 nesting_depth
+               FROM conversation_summaries`,
+            )
+            .all();
+          for (const rawRow of rows) {
+            if (!isRecord(rawRow)) continue;
+            const id = firstString(rawRow, ['conversation_id']);
+            if (!id) continue;
+            const parentId = firstString(rawRow, ['parent_conversation_id']);
+            const nestingDepth = firstNumber(rawRow, ['nesting_depth']);
+            if (isNonEmptyString(parentId) || (nestingDepth !== undefined && nestingDepth > 0)) {
+              addRecord(records, id, { isSubagent: true });
+              continue;
+            }
+            const title = firstString(rawRow, ['title']) ?? firstString(rawRow, ['preview']);
+            const cwd = parseWorkspaceUris(rawRow.workspace_uris);
+            const rawStepCount = firstNumber(rawRow, ['step_count']);
+            const stepCount = rawStepCount && rawStepCount > 0 ? rawStepCount : undefined;
+            const updatedAt =
+              parseTimestamp(firstString(rawRow, ['last_modified_time'])) ??
+              parseTimestamp(firstString(rawRow, ['last_user_input_time']));
+            const createdAt = parseTimestamp(firstString(rawRow, ['last_user_input_time'])) ?? updatedAt;
+            const existing = records.get(id);
+            const cli = mergeCliSummary(existing?.cli, {
+              id,
+              ...(title ? { title } : {}),
+              ...(cwd ? { cwd } : {}),
+              ...(createdAt ? { createdAt } : {}),
+              ...(updatedAt ? { updatedAt } : {}),
+              ...(stepCount ? { stepCount } : {}),
+            });
+            addRecord(records, id, { cli });
+          }
+        } catch (err) {
+          logger.debug('antigravity: failed to read conversation_summaries.db', dbPath, err);
+        } finally {
+          handle.close();
+        }
+      }
+    }
+
+    const historyPath = path.join(root, 'history.jsonl');
+    if (await exists(historyPath)) {
+      try {
+        const stream = fs.createReadStream(historyPath, { encoding: 'utf8' });
+        const rl = readline.createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
+        for await (const line of rl) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const obj: unknown = JSON.parse(trimmed);
+            if (!isRecord(obj)) continue;
+            const id = firstString(obj, ['conversationId', 'conversation_id', 'id']);
+            if (!id) continue;
+            const cwd = normalizeCwd(firstString(obj, ['workspace', 'cwd']));
+            const ts = dateFromEpoch(firstNumber(obj, ['timestamp']));
+            const display = firstString(obj, ['display', 'prompt', 'text']);
+            const entryType = firstString(obj, ['type']);
+            const isSlash = entryType === 'slash_command' || (display ? display.startsWith('/') : false);
+            const existing = records.get(id);
+            const cli = mergeCliSummary(existing?.cli, {
+              id,
+              ...(!isSlash && display ? { title: display } : {}),
+              ...(cwd ? { cwd } : {}),
+              ...(ts ? { createdAt: ts, updatedAt: ts } : {}),
+            });
+            addRecord(records, id, { cli });
+          } catch (err) {
+            logger.debug('antigravity: skipping malformed history.jsonl line', err);
+          }
+        }
+      } catch (err) {
+        logger.debug('antigravity: failed to read history.jsonl', historyPath, err);
+      }
+    }
   }
 }
 
@@ -364,8 +587,7 @@ async function parseLegacySessionFile(filePath: string): Promise<AntigravityEntr
   }
 }
 
-async function findLegacySessionFiles(): Promise<string[]> {
-  const codeTrackerDir = getCodeTrackerDir();
+async function findLegacySessionFiles(codeTrackerDir: string): Promise<string[]> {
   const pendingDirs = [codeTrackerDir];
   const files: string[] = [];
 
@@ -385,19 +607,22 @@ async function findLegacySessionFiles(): Promise<string[]> {
 }
 
 async function discoverLegacyRecords(records: Map<string, AntigravityRecord>): Promise<void> {
-  const codeTrackerDir = getCodeTrackerDir();
-  for (const filePath of await findLegacySessionFiles()) {
-    const entries = await parseLegacySessionFile(filePath);
-    if (!entries.some((entry) => entry.type === 'user' || entry.type === 'assistant')) continue;
-    const ext = path.extname(filePath);
-    // Use the code_tracker-relative path (separators → ':') so two legacy
-    // sessions whose basenames collide across subdirectories don't merge in
-    // addRecord. Falls back to basename for any file outside code_tracker/.
-    const relative = path.relative(codeTrackerDir, filePath);
-    const idBase = relative && !relative.startsWith('..')
-      ? relative.slice(0, -ext.length).replace(/[\\/]/gu, ':')
-      : path.basename(filePath, ext);
-    addRecord(records, `legacy:${idBase}`, { legacyPath: filePath });
+  for (const root of getAntigravityRoots()) {
+    const codeTrackerDir = path.join(root, 'code_tracker');
+    for (const filePath of await findLegacySessionFiles(codeTrackerDir)) {
+      const entries = await parseLegacySessionFile(filePath);
+      if (!entries.some((entry) => entry.type === 'user' || entry.type === 'assistant')) continue;
+      const ext = path.extname(filePath);
+      // Use the code_tracker-relative path (separators → ':') so two legacy
+      // sessions whose basenames collide across subdirectories don't merge in
+      // addRecord. Falls back to basename for any file outside code_tracker/.
+      const relative = path.relative(codeTrackerDir, filePath);
+      const idBase =
+        relative && !relative.startsWith('..')
+          ? relative.slice(0, -ext.length).replace(/[\\/]/gu, ':')
+          : path.basename(filePath, ext);
+      addRecord(records, `legacy:${idBase}`, { legacyPath: filePath });
+    }
   }
 }
 
@@ -1022,7 +1247,89 @@ function normalizeModelName(model: string): string {
 }
 
 function recordPreferredTitle(record: AntigravityRecord): string | undefined {
-  return record.live?.title ?? record.state?.title;
+  return record.live?.title ?? record.state?.title ?? record.cli?.title;
+}
+
+export function extractUserRequestText(raw: string): string {
+  const closedMatch = raw.match(/<USER_REQUEST>\s*([\s\S]*?)\s*<\/USER_REQUEST>/u);
+  if (closedMatch?.[1] !== undefined) {
+    return closedMatch[1].trim();
+  }
+  const openIdx = raw.indexOf('<USER_REQUEST>');
+  if (openIdx !== -1) {
+    return raw
+      .slice(openIdx + '<USER_REQUEST>'.length)
+      .replace(/<ADDITIONAL_METADATA>[\s\S]*/u, '')
+      .replace(/<USER_SETTINGS_CHANGE>[\s\S]*/u, '')
+      .trim();
+  }
+  return raw
+    .replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/gu, '')
+    .replace(/<USER_SETTINGS_CHANGE>[\s\S]*?<\/USER_SETTINGS_CHANGE>/gu, '')
+    .trim();
+}
+
+export function extractModelFromSettingsChange(raw: string): string | undefined {
+  const settingsMatch = raw.match(/<USER_SETTINGS_CHANGE>([\s\S]*?)<\/USER_SETTINGS_CHANGE>/u);
+  const target = settingsMatch ? settingsMatch[1] : raw;
+  const modelMatch = target.match(/setting\s+`Model Selection`\s+from\s+.+?\s+to\s+([^\n]+?)\.(?:\s|$)/u);
+  return modelMatch?.[1]?.trim() || undefined;
+}
+
+async function scanTranscriptMetadata(filePath: string): Promise<TranscriptMetadata> {
+  let stepCount = 0;
+  let firstUserPrompt: string | undefined;
+  let model: string | undefined;
+  let createdAt: Date | undefined;
+  let updatedAt: Date | undefined;
+  let cwd: string | undefined;
+
+  try {
+    const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+    const rl = readline.createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const step: unknown = JSON.parse(trimmed);
+        if (!isRecord(step)) continue;
+        stepCount += 1;
+
+        const ts = parseTimestamp(firstString(step, ['created_at', 'createdTime', 'timestamp']));
+        if (ts) {
+          if (!createdAt || ts.getTime() < createdAt.getTime()) createdAt = ts;
+          if (!updatedAt || ts.getTime() > updatedAt.getTime()) updatedAt = ts;
+        }
+
+        const stepType = firstString(step, ['type']);
+        if (stepType === 'USER_INPUT') {
+          const content = firstString(step, ['content']) ?? '';
+          const modelChange = extractModelFromSettingsChange(content);
+          if (modelChange) model = modelChange;
+
+          if (!firstUserPrompt) {
+            const userText = extractUserRequestText(content);
+            if (userText && !userText.startsWith('/')) {
+              firstUserPrompt = userText;
+            }
+          }
+        }
+      } catch (err) {
+        logger.debug('antigravity: skipping malformed transcript line during metadata scan', err);
+      }
+    }
+  } catch (err) {
+    logger.debug('antigravity: failed to scan transcript metadata', filePath, err);
+  }
+
+  return {
+    stepCount,
+    ...(firstUserPrompt ? { firstUserPrompt } : {}),
+    ...(model ? { model } : {}),
+    ...(createdAt ? { createdAt } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
+    ...(cwd ? { cwd } : {}),
+  };
 }
 
 async function readArtifact(filePath: string): Promise<string | undefined> {
@@ -1099,36 +1406,95 @@ async function brainArtifactPaths(brainDir: string | undefined): Promise<string[
   return files;
 }
 
-async function buildSessionFromRecord(record: AntigravityRecord): Promise<UnifiedSession | null> {
+async function buildSessionFromRecord(
+  record: AntigravityRecord,
+  options?: SessionParseOptions,
+): Promise<UnifiedSession | null> {
+  if (record.isSubagent) return null;
   if (record.legacyPath) return buildLegacySession(record.legacyPath, record.id);
 
   // Skip metadata-only records that have no concrete backing path; downstream
   // inspect/extract paths fs.statSync the originalPath, which would crash if
   // we emit a fallback to the (directory-only) antigravity root.
-  if (!record.conversationPath && !record.brainDir) return null;
+  if (!record.conversationPath && !record.brainDir && !record.transcriptPath) return null;
+
+  const knownCwd = record.live?.cwd ?? record.state?.cwd ?? record.cli?.cwd;
+  if (options?.cwd && knownCwd && !matchesCwd(knownCwd, options.cwd)) {
+    return null;
+  }
 
   const artifactPaths = await brainArtifactPaths(record.brainDir);
-  const stats = await pathStats([record.conversationPath, ...artifactPaths].filter(isNonEmptyString));
-  const title = recordPreferredTitle(record) ?? (await titleFromBrain(record.brainDir));
-  const cwd = record.live?.cwd ?? record.state?.cwd ?? (await inferCwdFromBrain(record.brainDir)) ?? '';
+  if (
+    !record.conversationPath &&
+    !record.transcriptPath &&
+    artifactPaths.length === 0 &&
+    !record.state &&
+    !record.live &&
+    !record.cli?.stepCount
+  ) {
+    return null;
+  }
+
+  const transcriptMeta = record.compactTranscriptPath
+    ? await scanTranscriptMetadata(record.compactTranscriptPath)
+    : record.transcriptPath
+      ? await scanTranscriptMetadata(record.transcriptPath)
+      : undefined;
+
+  if (
+    transcriptMeta &&
+    transcriptMeta.stepCount === 0 &&
+    !record.conversationPath &&
+    artifactPaths.length === 0 &&
+    !record.cli?.stepCount
+  ) {
+    return null;
+  }
+
+  const stats = await pathStats(
+    [record.transcriptPath, record.conversationPath, ...artifactPaths].filter(isNonEmptyString),
+  );
+  const title =
+    recordPreferredTitle(record) ?? transcriptMeta?.firstUserPrompt ?? (await titleFromBrain(record.brainDir));
+  const cwd = knownCwd ?? transcriptMeta?.cwd ?? (await inferCwdFromBrain(record.brainDir)) ?? '';
+
+  if (options?.cwd && !matchesCwd(cwd, options.cwd)) {
+    return null;
+  }
+
   const createdAt =
-    record.live?.createdAt ?? record.state?.createdAt ?? stats.createdAt ?? stats.updatedAt ?? new Date(0);
-  const updatedAt = record.live?.updatedAt ?? record.state?.updatedAt ?? stats.updatedAt ?? createdAt;
+    transcriptMeta?.createdAt ??
+    record.live?.createdAt ??
+    record.state?.createdAt ??
+    record.cli?.createdAt ??
+    stats.createdAt ??
+    stats.updatedAt ??
+    new Date(0);
+  const updatedAt =
+    record.live?.updatedAt ??
+    record.state?.updatedAt ??
+    record.cli?.updatedAt ??
+    transcriptMeta?.updatedAt ??
+    stats.updatedAt ??
+    createdAt;
   const summary = cleanSummary(title ?? `Antigravity conversation ${record.id.slice(0, 8)}`, 80);
-  const originalPath = record.conversationPath ?? record.brainDir ?? getAntigravityRoot();
+  const originalPath = record.transcriptPath ?? record.conversationPath ?? record.brainDir ?? getAntigravityRoot();
+  const cliLines = Math.max(record.cli?.stepCount ?? 0, transcriptMeta?.stepCount ?? 0);
+  const lines = record.live?.stepCount ?? record.state?.stepCount ?? (cliLines > 0 ? cliLines : artifactPaths.length);
+  const model = record.live?.model ?? transcriptMeta?.model;
 
   return {
     id: record.id,
     source: SOURCE_NAME,
     cwd,
     repo: extractRepoFromCwd(cwd),
-    lines: record.live?.stepCount ?? record.state?.stepCount ?? artifactPaths.length,
+    lines,
     bytes: stats.bytes,
     createdAt,
     updatedAt,
     originalPath,
     summary,
-    ...(record.live?.model ? { model: record.live.model } : {}),
+    ...(model ? { model } : {}),
   };
 }
 
@@ -1161,6 +1527,7 @@ async function buildLegacySession(filePath: string, prefixedId?: string): Promis
 
 async function discoverRecords(): Promise<Map<string, AntigravityRecord>> {
   const records = new Map<string, AntigravityRecord>();
+  await discoverCliSummaryRecords(records);
   await discoverConversationRecords(records);
   await discoverBrainRecords(records);
   await discoverStateRecords(records);
@@ -1169,16 +1536,17 @@ async function discoverRecords(): Promise<Map<string, AntigravityRecord>> {
   return records;
 }
 
-export async function parseAntigravitySessions(): Promise<UnifiedSession[]> {
+export async function parseAntigravitySessions(options?: SessionParseOptions): Promise<UnifiedSession[]> {
   const records = await discoverRecords();
   const sessions: UnifiedSession[] = [];
 
   for (const record of records.values()) {
-    const session = await buildSessionFromRecord(record);
+    const session = await buildSessionFromRecord(record, options);
     if (session) sessions.push(session);
   }
 
-  return sessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+  const sorted = sessions.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+  return options?.limit && options.limit > 0 ? sorted.slice(0, options.limit) : sorted;
 }
 
 async function readLegacyMessages(filePath: string, fallbackDate: Date): Promise<ConversationMessage[]> {
@@ -1203,11 +1571,27 @@ function extractSessionId(session: UnifiedSession): string {
 
 async function resolveBrainDirForSession(session: UnifiedSession): Promise<string | undefined> {
   const id = extractSessionId(session);
-  const direct = path.join(getBrainDir(), id);
-  if (await exists(direct)) return direct;
+  for (const root of getAntigravityRoots()) {
+    const direct = path.join(root, 'brain', id);
+    if (await exists(direct)) return direct;
+  }
+  if (session.originalPath.endsWith('.jsonl')) {
+    const candidate = path.resolve(path.dirname(session.originalPath), '..', '..');
+    if (path.basename(candidate) === id && (await exists(candidate))) return candidate;
+  }
   const maybeRecordDir = path.dirname(session.originalPath);
   if (path.basename(maybeRecordDir) === id && (await hasBrainArtifacts(maybeRecordDir))) return maybeRecordDir;
   return undefined;
+}
+
+async function resolveTranscriptForSession(session: UnifiedSession): Promise<string | undefined> {
+  if (session.originalPath.endsWith('.jsonl') && !session.id.startsWith('legacy:')) {
+    if (await exists(session.originalPath)) return session.originalPath;
+  }
+  const brainDir = await resolveBrainDirForSession(session);
+  if (!brainDir) return undefined;
+  const transcripts = await findTranscriptPaths(brainDir);
+  return transcripts?.transcriptPath;
 }
 
 function taskFromMarkdown(markdown: string): string | undefined {
@@ -1346,6 +1730,31 @@ function parseToolArguments(raw: unknown): Record<string, unknown> | undefined {
   return undefined;
 }
 
+export function normalizeCliToolArgs(raw: unknown): Record<string, unknown> | undefined {
+  const base = parseToolArguments(raw);
+  if (!base) return undefined;
+  const normalized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(base)) {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (
+        (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+        (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+        (trimmed.startsWith('[') && trimmed.endsWith(']'))
+      ) {
+        try {
+          normalized[key] = JSON.parse(trimmed);
+          continue;
+        } catch {
+          // Keep original string if not valid JSON
+        }
+      }
+    }
+    normalized[key] = value;
+  }
+  return normalized;
+}
+
 function extractTextItems(items: unknown): string {
   if (!Array.isArray(items)) return '';
   return items
@@ -1359,7 +1768,17 @@ function extractTextItems(items: unknown): string {
 }
 
 function extractFilePath(record: Record<string, unknown>): string | undefined {
-  const direct = firstString(record, ['filePath', 'file_path', 'path', 'absolutePath', 'workspacePath']);
+  const direct = firstString(record, [
+    'Path',
+    'TargetFile',
+    'filePath',
+    'file_path',
+    'path',
+    'absolutePath',
+    'workspacePath',
+    'DirectoryPath',
+    'SearchPath',
+  ]);
   if (direct) return normalizeCwd(direct) ?? direct;
 
   for (const value of Object.values(record)) {
@@ -1370,6 +1789,205 @@ function extractFilePath(record: Record<string, unknown>): string | undefined {
   }
 
   return undefined;
+}
+
+function parseLineDiffStatsFromResult(result: string | undefined): { added: number; removed: number } | undefined {
+  if (!result) return undefined;
+  const match = result.match(/\(\+(\d+)\/-(\d+)\s+lines?\)/iu);
+  if (!match) return undefined;
+  return { added: Number(match[1]), removed: Number(match[2]) };
+}
+
+function extractCommandStdoutTail(result: string | undefined, maxLines = 5): string | undefined {
+  if (!result) return undefined;
+  const marker = 'Command output:';
+  const idx = result.indexOf(marker);
+  const body = (idx !== -1 ? result.slice(idx + marker.length) : result).trim();
+  if (!body) return undefined;
+  const lines = body.split('\n');
+  return lines.slice(-maxLines).join('\n').slice(-500);
+}
+
+function summarizeCliToolCall(toolCall: ToolCall, collector: SummaryCollector, config: VerbosityConfig): void {
+  const name = toolCall.name;
+  if (SKIP_TOOLS.has(name)) return;
+
+  const args = toolCall.arguments ?? {};
+  const result = toolCall.result;
+  const isError = toolCall.success === false;
+
+  if (SHELL_TOOLS.has(name)) {
+    const command = firstString(args, ['CommandLine', 'command', 'commandLine', 'cmd']);
+    if (!command) return;
+    const exitCode = extractExitCode(result);
+    const stdoutTail = extractCommandStdoutTail(result, config.shell.stdoutLines);
+    const errored = isError || (exitCode !== undefined && exitCode !== 0);
+    collector.add('Bash', shellSummary(command, result), {
+      data: {
+        category: 'shell',
+        command,
+        ...(exitCode !== undefined ? { exitCode } : {}),
+        ...(stdoutTail ? { stdoutTail } : {}),
+        ...(errored ? { errored: true, ...(stdoutTail ? { errorMessage: stdoutTail.slice(0, 200) } : {}) } : {}),
+      },
+      isError: errored,
+    });
+    return;
+  }
+
+  if (READ_TOOLS.has(name)) {
+    const filePath = extractFilePath(args);
+    if (!filePath) return;
+    const lineStart = firstNumber(args, ['StartLine', 'startLine', 'lineStart', 'offset']);
+    const lineEnd = firstNumber(args, ['EndLine', 'endLine', 'lineEnd', 'limit']);
+    collector.add('Read', fileSummary('read', filePath), {
+      data: {
+        category: 'read',
+        filePath,
+        ...(lineStart !== undefined ? { lineStart } : {}),
+        ...(lineEnd !== undefined ? { lineEnd } : {}),
+      },
+      filePath,
+      isError,
+    });
+    return;
+  }
+
+  if (WRITE_TOOLS.has(name)) {
+    const filePath = extractFilePath(args);
+    if (!filePath) return;
+    const content = firstString(args, ['Content', 'content', 'fileText', 'CodeContent']);
+    const diffStats =
+      parseLineDiffStatsFromResult(result) ??
+      (content !== undefined ? { added: content.split('\n').length, removed: 0 } : undefined);
+    const isNewFile = result ? /^Created\b/iu.test(result.trim()) : true;
+    collector.add('Write', fileSummary('write', filePath, diffStats, isNewFile), {
+      data: {
+        category: 'write',
+        filePath,
+        isNewFile,
+        ...(diffStats ? { diffStats } : {}),
+        ...(isError && result ? { errorMessage: result.slice(0, 200) } : {}),
+      },
+      filePath,
+      isWrite: true,
+      isError,
+    });
+    return;
+  }
+
+  if (EDIT_TOOLS.has(name)) {
+    const filePath = extractFilePath(args);
+    if (!filePath) return;
+    const target = firstString(args, ['Target', 'TargetContent', 'old_string', 'oldString']);
+    const replacement = firstString(args, ['Replacement', 'ReplacementContent', 'new_string', 'newString']);
+    const diffStats =
+      parseLineDiffStatsFromResult(result) ??
+      (target !== undefined && replacement !== undefined
+        ? { added: replacement.split('\n').length, removed: target.split('\n').length }
+        : undefined);
+    collector.add('Edit', fileSummary('edit', filePath, diffStats), {
+      data: {
+        category: 'edit',
+        filePath,
+        ...(diffStats ? { diffStats } : {}),
+        ...(isError && result ? { errorMessage: result.slice(0, 200) } : {}),
+      },
+      filePath,
+      isWrite: true,
+      isError,
+    });
+    return;
+  }
+
+  if (GREP_TOOLS.has(name)) {
+    const pattern = firstString(args, ['Query', 'query', 'pattern', 'Pattern']) ?? '';
+    const targetPath = normalizeCwd(firstString(args, ['SearchPath', 'searchPath', 'Path', 'path', 'DirectoryPath']));
+    collector.add('Grep', grepSummary(pattern, targetPath), {
+      data: {
+        category: 'grep',
+        pattern,
+        ...(targetPath ? { targetPath } : {}),
+      },
+      isError,
+    });
+    return;
+  }
+
+  if (GLOB_TOOLS.has(name)) {
+    const pattern =
+      firstString(args, ['Pattern', 'pattern', 'DirectoryPath', 'SearchDirectory', 'Path', 'path']) ?? '.';
+    collector.add('Glob', globSummary(pattern), {
+      data: {
+        category: 'glob',
+        pattern,
+      },
+      isError,
+    });
+    return;
+  }
+
+  if (SEARCH_TOOLS.has(name)) {
+    const query = firstString(args, ['query', 'Query']) ?? '';
+    const resultPreview = stringifyPreview(result, 100);
+    collector.add('WebSearch', searchSummary(query), {
+      data: {
+        category: 'search',
+        query,
+        ...(resultPreview ? { resultPreview } : {}),
+      },
+      isError,
+    });
+    return;
+  }
+
+  if (FETCH_TOOLS.has(name)) {
+    const url = firstString(args, ['url', 'Url', 'URL']) ?? '';
+    const resultPreview = stringifyPreview(result, 100);
+    collector.add('WebFetch', fetchSummary(url), {
+      data: {
+        category: 'fetch',
+        url,
+        ...(resultPreview ? { resultPreview } : {}),
+      },
+      isError,
+    });
+    return;
+  }
+
+  if (TASK_TOOLS.has(name)) {
+    const description = firstString(args, ['Role', 'description', 'Prompt', 'prompt']) ?? 'subagent';
+    const agentType = firstString(args, ['TypeName', 'subagent_type', 'type']);
+    const resultSummary = stringifyPreview(result, 100);
+    collector.add('Task', subagentSummary(description, agentType), {
+      data: {
+        category: 'task',
+        description,
+        ...(agentType ? { agentType } : {}),
+        ...(resultSummary ? { resultSummary } : {}),
+      },
+      isError,
+    });
+    return;
+  }
+
+  if (ASK_TOOLS.has(name)) {
+    let question = firstString(args, ['question', 'Question']);
+    if (!question && Array.isArray(args.questions) && isRecord(args.questions[0])) {
+      question = firstString(args.questions[0], ['question', 'Question']);
+    }
+    question ??= 'user question';
+    collector.add('AskUserQuestion', `ask "${truncate(question, 60)}"`, {
+      data: {
+        category: 'ask',
+        question: truncate(question, 80),
+      },
+      isError,
+    });
+    return;
+  }
+
+  summarizeGenericTool(name, args, result, collector, isError);
 }
 
 function summarizeGenericTool(
@@ -1549,6 +2167,176 @@ function extractFromSteps(steps: unknown[], config: VerbosityConfig, fallbackDat
     ) {
       summarizeToolStep(type, stepDataForType(type, rawStep), collector);
     }
+  }
+
+  return {
+    messages,
+    filesModified: collector.getFilesModified(),
+    toolSummaries: collector.getSummaries(),
+    pendingTasks: Array.from(new Set(pendingTasks)).slice(0, config.pendingTasks.maxTasks),
+    sessionNotes: Object.keys(sessionNotes).length > 0 ? sessionNotes : undefined,
+  };
+}
+
+async function extractTranscriptContext(
+  session: UnifiedSession,
+  transcriptPath: string,
+  config: VerbosityConfig,
+): Promise<RpcStepExtraction | null> {
+  const messages: ConversationMessage[] = [];
+  const collector = new SummaryCollector(config);
+  const pendingTasks: string[] = [];
+  const sessionNotes: SessionNotes = {};
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let pendingToolCalls: ToolCall[] = [];
+
+  const flushPendingToolCalls = (): void => {
+    if (pendingToolCalls.length === 0) return;
+    for (const tc of pendingToolCalls) {
+      summarizeCliToolCall(tc, collector, config);
+    }
+    pendingToolCalls = [];
+  };
+
+  try {
+    const stream = fs.createReadStream(transcriptPath, { encoding: 'utf8' });
+    const rl = readline.createInterface({ input: stream, crlfDelay: Number.POSITIVE_INFINITY });
+
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      let step: unknown;
+      try {
+        step = JSON.parse(trimmed);
+      } catch (err) {
+        logger.debug('antigravity: skipping malformed transcript JSONL line', err);
+        continue;
+      }
+
+      if (!isRecord(step)) continue;
+      const type = firstString(step, ['type']) ?? '';
+
+      if (type !== 'GENERIC' && pendingToolCalls.length > 0) {
+        flushPendingToolCalls();
+      }
+
+      inputTokens += firstNumber(step, ['input_tokens']) ?? 0;
+      outputTokens += firstNumber(step, ['output_tokens']) ?? 0;
+      cacheReadTokens += firstNumber(step, ['cache_read_tokens']) ?? 0;
+
+      const timestamp =
+        parseTimestamp(firstString(step, ['created_at', 'createdTime', 'timestamp']), session.updatedAt) ??
+        session.updatedAt;
+
+      if (type === 'USER_INPUT') {
+        const rawContent = firstString(step, ['content']) ?? '';
+        const modelChange = extractModelFromSettingsChange(rawContent);
+        if (modelChange) {
+          sessionNotes.model = modelChange;
+          if (!session.model) session.model = modelChange;
+        }
+
+        const userText = extractUserRequestText(rawContent);
+        if (userText) {
+          messages.push({ role: 'user', content: userText, timestamp });
+        } else if (Array.isArray(step.media) && step.media.length > 0) {
+          messages.push({ role: 'user', content: '[attached media]', timestamp });
+        }
+        continue;
+      }
+
+      if (type === 'PLANNER_RESPONSE') {
+        const thinking = firstString(step, ['thinking', 'thought', 'reasoning']);
+        if (thinking) {
+          sessionNotes.reasoning ??= [];
+          if (sessionNotes.reasoning.length < 10) {
+            sessionNotes.reasoning.push(truncate(thinking, 500));
+          }
+        }
+
+        const content = firstString(step, ['content', 'response', 'text']);
+        if (content) {
+          pendingTasks.push(...extractPendingFromText(content, config.pendingTasks.maxTasks));
+        }
+
+        const toolCalls: ToolCall[] = [];
+        if (Array.isArray(step.tool_calls)) {
+          for (const rawTc of step.tool_calls) {
+            if (!isRecord(rawTc)) continue;
+            const name = firstString(rawTc, ['name', 'toolName']);
+            if (!name) continue;
+            const args = normalizeCliToolArgs(rawTc.args ?? rawTc.arguments ?? rawTc.argumentsJson);
+            const id = firstString(rawTc, ['id', 'callId']);
+            toolCalls.push({
+              name,
+              ...(id ? { id } : {}),
+              ...(args ? { arguments: args } : {}),
+            });
+          }
+        }
+
+        if (content || toolCalls.length > 0) {
+          messages.push({
+            role: 'assistant',
+            content: content ?? `[tool calls: ${toolCalls.map((tc) => tc.name).join(', ')}]`,
+            timestamp,
+            ...(toolCalls.length > 0 ? { toolCalls } : {}),
+          });
+        }
+
+        pendingToolCalls = [...toolCalls];
+        continue;
+      }
+
+      if (type === 'GENERIC') {
+        const currentTc = pendingToolCalls.shift();
+        if (currentTc) {
+          const result = firstString(step, ['content', 'output', 'result']);
+          const status = firstString(step, ['status']);
+          if (result) currentTc.result = result;
+          if (status) currentTc.success = status !== 'ERROR' && status !== 'FAILED' && status !== 'CANCELED';
+          summarizeCliToolCall(currentTc, collector, config);
+        }
+        continue;
+      }
+
+      if (type === 'CHECKPOINT') {
+        const rawContent = firstString(step, ['content']) ?? '';
+        const summaryMatch = rawContent.match(/<summary>\s*([\s\S]*?)\s*<\/summary>/u);
+        const summaryText = (summaryMatch?.[1] ?? rawContent).trim();
+        if (summaryText) {
+          sessionNotes.compactSummary = truncate(summaryText, 2000);
+          pendingTasks.push(...extractPendingFromText(summaryText, config.pendingTasks.maxTasks));
+        }
+      }
+    }
+
+    flushPendingToolCalls();
+  } catch (err) {
+    logger.debug('antigravity: failed to extract CLI transcript context', transcriptPath, err);
+    return null;
+  }
+
+  const brainDir = await resolveBrainDirForSession(session);
+  if (brainDir) {
+    for (const baseName of ['task.md', 'implementation_plan.md']) {
+      const artifactPath = await findBrainArtifactPath(brainDir, baseName);
+      if (!artifactPath) continue;
+      const text = await readArtifact(artifactPath);
+      if (text) {
+        pendingTasks.push(...pendingTasksFromMarkdown(text));
+      }
+    }
+  }
+
+  if (inputTokens > 0 || outputTokens > 0) {
+    sessionNotes.tokenUsage = { input: inputTokens, output: outputTokens };
+  }
+  if (cacheReadTokens > 0) {
+    sessionNotes.cacheTokens = { creation: 0, read: cacheReadTokens };
   }
 
   return {
@@ -1774,12 +2562,23 @@ export async function extractAntigravityContext(
     };
   }
 
+  // Antigravity CLI (agy) stores unencrypted JSONL transcripts under
+  // brain/<id>/.system_generated/logs/transcript_full.jsonl. Prefer reading the
+  // transcript directly without connecting to or launching the IDE.
+  const transcriptPath = await resolveTranscriptForSession(session);
+  if (transcriptPath) {
+    const transcriptExtracted = await extractTranscriptContext(session, transcriptPath, resolvedConfig);
+    if (transcriptExtracted && liveHasContent(transcriptExtracted)) {
+      return buildLiveSessionContext(session, transcriptExtracted, resolvedConfig);
+    }
+  }
+
   const live = await extractLiveContext(session, resolvedConfig);
   if (live && liveHasContent(live)) {
     return buildLiveSessionContext(session, live, resolvedConfig);
   }
 
-  // Antigravity stores conversation .pb files as encrypted blobs — only the
+  // Antigravity IDE stores conversation .pb files as encrypted blobs — only the
   // running language_server holds the decryption key. If it's offline, try to
   // launch the IDE in the foreground and aggressively poll for the RPC port to
   // come up so we can produce a real transcript instead of empty handoffs.
