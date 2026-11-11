@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.1] - 2026-11-12
+
+### Fixed
+
+- **Interactive Unix TTY foreground process group** — `runCommand` now spawns
+  the target CLI via `sh -m` on interactive non-Windows terminals so POSIX job
+  control places the child agent (`codex`, `claude`, `agy`, `kiro-cli`, etc.)
+  in its own foreground process group (`setpgid` + `tcsetpgrp`) and restores
+  the terminal foreground process group on exit. This allows terminal
+  multiplexers and agent monitors (such as `herdr` / Ovis) to immediately
+  detect the `tpgid` transition even after spending `> 8s` in the `continues`
+  picker TUI, and prevents terminal `SIGINT` (`Ctrl+C`) from killing the
+  parent `continues` wrapper while the child CLI is still running.
+
 ## [4.4.0] - 2026-11-10
 
 ### Added
