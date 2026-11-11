@@ -56,6 +56,34 @@ describe('CONTINUES_<TOOL>_ARGS', () => {
     expect(getResumeCommand(session)).toContain('--dangerously-skip-permissions');
   });
 
+  it('launches target CLI in its own foreground process group via sh -m on interactive Unix TTYs', async () => {
+    if (process.platform === 'win32') return;
+    spawnMock.mockImplementation(() => {
+      const child = new EventEmitter();
+      queueMicrotask(() => child.emit('close', 0));
+      return child;
+    });
+    const originalDescriptor = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    try {
+      Object.defineProperty(process.stdin, 'isTTY', { value: true, configurable: true });
+      await nativeResume({ ...session, source: 'codex' });
+      expect(spawnMock.mock.calls.at(-1)?.slice(0, 2)).toEqual([
+        'sh',
+        ['-m', '-c', '"$@"', 'sh', 'codex', 'resume', 'abc'],
+      ]);
+
+      Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+      await nativeResume({ ...session, source: 'codex' });
+      expect(spawnMock.mock.calls.at(-1)?.slice(0, 2)).toEqual(['codex', ['resume', 'abc']]);
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(process.stdin, 'isTTY', originalDescriptor);
+      } else {
+        delete (process.stdin as { isTTY?: boolean }).isTTY;
+      }
+    }
+  });
+
   it('rejects Windows shell syntax in configured defaults', () => {
     if (process.platform !== 'win32') return;
     vi.stubEnv('CONTINUES_CLAUDE_ARGS', '--model "opus"');

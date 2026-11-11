@@ -307,9 +307,15 @@ function runCommand(command: string, args: string[], cwd: string, stdinData?: st
     // On Windows, invoke cmd.exe explicitly to handle .cmd/.bat shims.
     // Args stay in the array — no shell:true (avoids DEP0190), no string
     // concatenation (avoids command-injection risk).
+    // On Unix interactive terminals, launch through `sh -m` so the target CLI
+    // runs in its own foreground process group (tcsetpgrp), letting terminal
+    // multiplexers like herdr immediately detect the foreground agent even
+    // after a long picker session and keeping terminal signals isolated.
     const child = IS_WINDOWS
       ? spawn(process.env.ComSpec ?? 'cmd.exe', ['/c', command, ...args], { cwd, stdio })
-      : spawn(command, args, { cwd, stdio });
+      : process.stdin.isTTY && !stdinData
+        ? spawn('sh', ['-m', '-c', '"$@"', 'sh', command, ...args], { cwd, stdio })
+        : spawn(command, args, { cwd, stdio });
 
     if (stdinData && child.stdin) {
       child.stdin.write(stdinData);
