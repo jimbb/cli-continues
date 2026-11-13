@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.5.0] - 2026-11-13
+
+### Added
+
+- **Caveman Code session support** — the new `caveman` source discovers
+  Caveman Code (`caveman-code`, a pi fork) sessions under
+  `~/.cave/agent/sessions/`, reads pi's v3 session JSONL along the active
+  branch of each session tree, and extracts messages, categorised tool activity
+  (read/bash/edit/write/grep/find/ls), modified files, thinking highlights, the
+  model and the last compaction summary. `continues caveman [n]`,
+  `--source caveman` and `--in caveman` work like every other tool. Native
+  resume runs `caveman-code --session <file>`; handoffs into Caveman Code start
+  `caveman-code` with the handoff prompt (`caveman-code` first, because the
+  Caveman CLI `@caveman-ai/cli` installs a `caveman` command too).
+
 ## [4.4.1] - 2026-11-12
 
 ### Fixed
