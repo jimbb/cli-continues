@@ -18,6 +18,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import {
   extractAmpContext,
   extractAntigravityContext,
+  extractCavemanContext,
   extractClaudeContext,
   extractClineContext,
   extractCodexContext,
@@ -35,6 +36,7 @@ import {
   extractRooCodeContext,
   parseAmpSessions,
   parseAntigravitySessions,
+  parseCavemanSessions,
   parseClaudeSessions,
   parseClineSessions,
   parseCodexSessions,
@@ -72,6 +74,7 @@ const ALL_SOURCES: SessionSource[] = [
   'kimi',
   'qwen-code',
   'grok',
+  'caveman',
 ];
 
 const parsers: Record<SessionSource, () => Promise<UnifiedSession[]>> = {
@@ -92,6 +95,7 @@ const parsers: Record<SessionSource, () => Promise<UnifiedSession[]>> = {
   kimi: parseKimiSessions,
   'qwen-code': parseQwenCodeSessions,
   grok: parseGrokSessions,
+  caveman: parseCavemanSessions,
 };
 
 const extractors: Record<SessionSource, (s: UnifiedSession) => Promise<SessionContext>> = {
@@ -112,6 +116,7 @@ const extractors: Record<SessionSource, (s: UnifiedSession) => Promise<SessionCo
   kimi: extractKimiContext,
   'qwen-code': extractQwenCodeContext,
   grok: extractGrokContext,
+  caveman: extractCavemanContext,
 };
 
 // Results directory
@@ -304,6 +309,7 @@ describe('E2E: 20 Cross-Tool Conversion Paths', () => {
           kimi: 'Kimi CLI',
           'qwen-code': 'Qwen Code',
           grok: 'Grok Build',
+          caveman: 'Caveman Code',
         };
         const sourceLabel = sourceLabels[source];
 

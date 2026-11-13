@@ -5,6 +5,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ConversationMessage, SessionContext, SessionSource, UnifiedSession } from '../types/index.js';
@@ -459,6 +460,7 @@ function parseQwenCodeFixtureMessages(filePath: string): ConversationMessage[] {
 // ─── Fixture Data ────────────────────────────────────────────────────────────
 
 // Derive from registry — automatically picks up new tools
+import { extractCavemanContext } from '../parsers/caveman.js';
 import { ALL_TOOLS } from '../parsers/registry.js';
 
 const ALL_SOURCES: readonly SessionSource[] = ALL_TOOLS;
@@ -961,6 +963,55 @@ beforeAll(() => {
     toolSummaries: [],
     markdown: generateHandoffMarkdown(grokSession, grokMsgs, [], [], []),
   };
+});
+
+// Caveman Code (pi v3 JSONL): built with the real extractor from a one-file fixture
+beforeAll(async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'test-caveman-'));
+  const file = path.join(root, '2026-01-15T10-00-00-000Z_cafe0000-1111-2222-3333-444444444444.jsonl');
+  const entries = [
+    {
+      type: 'session',
+      version: 3,
+      id: 'cafe0000-1111-2222-3333-444444444444',
+      timestamp: '2026-01-15T10:00:00.000Z',
+      cwd: '/home/user/project',
+    },
+    { type: 'model_change', id: 'm1', parentId: null, provider: 'cpa-claude', modelId: 'claude-opus-5-5' },
+    {
+      type: 'message',
+      id: 'u1',
+      parentId: 'm1',
+      timestamp: '2026-01-15T10:00:01.000Z',
+      message: { role: 'user', content: [{ type: 'text', text: 'Fix the authentication bug in login.ts' }] },
+    },
+    {
+      type: 'message',
+      id: 'a1',
+      parentId: 'u1',
+      timestamp: '2026-01-15T10:00:02.000Z',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'I will fix the authentication bug in login.ts.' }],
+      },
+    },
+  ];
+  fs.writeFileSync(file, entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  fixtures.caveman = { root, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+  const now = new Date();
+  contexts.caveman = await extractCavemanContext({
+    id: 'cafe0000-1111-2222-3333-444444444444',
+    source: 'caveman',
+    cwd: '/home/user/project',
+    repo: 'user/project',
+    branch: 'main',
+    lines: 4,
+    bytes: fs.statSync(file).size,
+    createdAt: now,
+    updatedAt: now,
+    originalPath: file,
+    summary: 'Fix auth bug',
+  });
 });
 
 afterAll(() => {

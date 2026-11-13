@@ -50,8 +50,8 @@ import {
 // ── tool-names.ts ────────────────────────────────────────────────────────────
 
 describe('TOOL_NAMES', () => {
-  it('contains exactly 17 tools', () => {
-    expect(TOOL_NAMES).toHaveLength(17);
+  it('contains exactly 18 tools', () => {
+    expect(TOOL_NAMES).toHaveLength(18);
   });
 
   it('includes all known tools', () => {
@@ -73,6 +73,7 @@ describe('TOOL_NAMES', () => {
       'kimi',
       'qwen-code',
       'grok',
+      'caveman',
     ];
     expect([...TOOL_NAMES]).toEqual(expected);
   });

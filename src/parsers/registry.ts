@@ -11,6 +11,7 @@ import {
 } from '../utils/forward-flags.js';
 import { extractAmpContext, parseAmpSessions } from './amp.js';
 import { extractAntigravityContext, parseAntigravitySessions } from './antigravity.js';
+import { extractCavemanContext, parseCavemanSessions } from './caveman.js';
 import { extractClaudeContext, parseClaudeSessions } from './claude.js';
 import {
   extractClineContext,
@@ -1047,6 +1048,22 @@ register({
   crossToolArgs: (prompt) => [prompt],
   resumeCommandDisplay: (s) => `grok --resume ${s.id}`,
   mapHandoffFlags: mapGrokFlags,
+});
+
+// ── Caveman Code (pi fork) ───────────────────────────────────────────
+register({
+  name: 'caveman',
+  label: 'Caveman Code',
+  color: chalk.hex('#D97757'),
+  storagePath: '~/.cave/agent/sessions/',
+  // its own name: the Caveman CLI (@caveman-ai/cli) installs a `caveman` too
+  binaryName: 'caveman-code',
+  binaryFallbacks: ['caveman'],
+  parseSessions: parseCavemanSessions,
+  extractContext: extractCavemanContext,
+  nativeResumeArgs: (s) => ['--session', s.originalPath],
+  crossToolArgs: (prompt) => [prompt],
+  resumeCommandDisplay: (s) => `caveman-code --session ${s.originalPath}`,
 });
 
 function mapGrokFlags(context: ForwardFlagMapContext): ForwardMapResult {
