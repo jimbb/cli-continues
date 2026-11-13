@@ -18,9 +18,9 @@ This is the maintained `continues` fork at [jimbb/cli-continues](https://github.
 
 ## Supported tools
 
-17 AI coding agents, any-to-any handoff:
+18 AI coding agents, any-to-any handoff:
 
-**Claude Code** · **Codex** · **GitHub Copilot CLI** · **Gemini CLI** · **Cursor** · **Amp** · **Cline** · **Roo Code** · **Kilo Code** · **Kiro** · **Crush** · **OpenCode** · **Factory Droid** · **Antigravity** · **Kimi CLI** · **Qwen Code** · **Grok Build**
+**Claude Code** · **Codex** · **GitHub Copilot CLI** · **Gemini CLI** · **Cursor** · **Amp** · **Cline** · **Roo Code** · **Kilo Code** · **Kiro** · **Crush** · **OpenCode** · **Factory Droid** · **Antigravity** · **Kimi CLI** · **Qwen Code** · **Grok Build** · **Caveman Code**
 
 That's 272 cross-tool handoff paths. Pick any source, pick any destination — it works.
 
@@ -34,7 +34,7 @@ npm install -g continues    # gives you `continues` and `cont`
 
 ## How it works
 
-1. **Discovery** — scans session directories for all 17 tools
+1. **Discovery** — scans session directories for all 18 tools
 2. **Parsing** — reads each tool's native format (JSONL, JSON, SQLite, YAML — they're all different)
 3. **Extraction** — pulls recent messages, file changes, tool activity, AI reasoning
 4. **Handoff** — generates a structured context doc and injects it into the target tool
@@ -50,7 +50,7 @@ Just run `continues`. It finds all your sessions, lets you pick one, and asks wh
 ```
 ┌  continues — pick up where you left off
 │
-│  Found 1842 sessions across 17 CLI tools
+│  Found 1842 sessions across 18 CLI tools
 │    claude: 723  codex: 72  cursor: 68  copilot: 39  ...
 │
 ◆  Select a session
@@ -82,9 +82,10 @@ continues kimi          # latest Kimi
 continues qwen-code     # latest Qwen Code
 continues grok          # latest Grok Build session
 continues agy           # latest Antigravity (agy) session
+continues caveman       # latest Caveman Code session
 ```
 
-Works for all 17 tools. This uses **native resume** — same tool, full history, no context injection.
+Works for all 18 tools. This uses **native resume** — same tool, full history, no context injection.
 
 ### Cross-tool handoff
 
@@ -202,6 +203,7 @@ Every tool stores sessions differently — different formats, different schemas,
 | Antigravity | SQLite + JSONL (CLI) · PB + brain artifacts + optional live RPC (IDE) | `~/.gemini/antigravity-cli/` (CLI) · `~/.gemini/antigravity/` (IDE) |
 | Kimi CLI | JSONL + JSON | `~/.kimi/sessions/` |
 | Qwen Code | JSONL | `~/.qwen/projects/*/chats/` |
+| Caveman Code | JSONL (pi v3) | `~/.cave/agent/sessions/` |
 
 All reads are **read-only** — `continues` never modifies your session files. Index cached at `~/.continues/sessions.jsonl` (5-min TTL, auto-refresh).
 
@@ -221,7 +223,7 @@ The handoff document includes a **Tool Activity** section so the target agent kn
 - 💭 Need to handle the edge case where token refresh races with logout
 ```
 
-This works for all 17 tools — bash commands, file reads/writes/edits, grep/glob, MCP tool calls, thinking blocks, subagent dispatches, token usage, model info. The shared `SummaryCollector` keeps the format consistent regardless of source.
+This works for all 18 tools — bash commands, file reads/writes/edits, grep/glob, MCP tool calls, thinking blocks, subagent dispatches, token usage, model info. The shared `SummaryCollector` keeps the format consistent regardless of source.
 
 Every handoff also includes the **full file path** of the original session, so the receiving tool can trace back to the raw data if needed.
 
@@ -236,7 +238,7 @@ Every handoff also includes the **full file path** of the original session, so t
 | `continues dump <source\|all> <dir>` | Bulk export sessions (`--json`, `--preset`, `--limit`) |
 | `continues scan` | Discovery stats (`--rebuild`) |
 | `continues rebuild` | Force-rebuild session index |
-| `continues <tool> [n]` | Quick-resume Nth session from any of the 17 tools |
+| `continues <tool> [n]` | Quick-resume Nth session from any of the 18 tools |
 
 Global flags: `--config <path>`, `--preset <name>`, `--verbose`, `--debug`
 
@@ -259,7 +261,7 @@ The latest batch — **Amp, Kiro, Crush, Cline, Roo Code, Kilo Code, Antigravity
 ## Requirements
 
 - **Node.js 22.5+** (uses built-in `node:sqlite` for OpenCode and Crush)
-- At least one of the 17 supported tools installed
+- At least one of the 18 supported tools installed
 
 ## Development
 

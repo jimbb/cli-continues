@@ -1,5 +1,6 @@
 export { extractAmpContext, parseAmpSessions } from './amp.js';
 export { extractAntigravityContext, parseAntigravitySessions } from './antigravity.js';
+export { extractCavemanContext, parseCavemanSessions } from './caveman.js';
 export { extractClaudeContext, parseClaudeSessions } from './claude.js';
 export {
   extractClineContext,
