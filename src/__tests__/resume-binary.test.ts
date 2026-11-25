@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { adapters } from '../parsers/registry.js';
 import { IS_WINDOWS } from '../utils/platform.js';
-import { getToolBinaryCandidates, resolveToolBinaryName } from '../utils/resume.js';
+import { getToolBinaryCandidates, launchCwd, resolveToolBinaryName } from '../utils/resume.js';
 
 describe('tool binary resolution', () => {
   it('prefers cursor-agent with agent as fallback', () => {
@@ -55,5 +55,14 @@ describe('tool binary resolution', () => {
       adapters.devin.nativeResumeArgs({ id: 'sess-1' } as Parameters<typeof adapters.devin.nativeResumeArgs>[0]),
     ).toEqual(['-r', 'sess-1']);
     expect(adapters.devin.crossToolArgs('continue work', '/tmp')).toEqual(['--', 'continue work']);
+  });
+});
+
+describe('launch directory', () => {
+  type S = Parameters<typeof launchCwd>[0];
+  it('uses the session cwd when it exists and falls back when it was deleted', () => {
+    expect(launchCwd({ cwd: process.cwd() } as S)).toBe(process.cwd());
+    expect(launchCwd({ cwd: '/definitely/not/here/continues-test' } as S)).toBe(process.cwd());
+    expect(launchCwd({ cwd: '' } as S)).toBe(process.cwd());
   });
 });
