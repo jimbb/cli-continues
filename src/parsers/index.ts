@@ -15,6 +15,7 @@ export { extractCopilotContext, parseCopilotSessions } from './copilot.js';
 export { extractCrushContext, parseCrushSessions } from './crush.js';
 export { extractCursorContext, parseCursorSessions } from './cursor.js';
 export { extractDroidContext, parseDroidSessions } from './droid.js';
+export { extractDshContext, parseDshSessions } from './dsh.js';
 export { extractGeminiContext, parseGeminiSessions } from './gemini.js';
 export { extractGrokContext, parseGrokSessions } from './grok.js';
 export { extractKimiContext, parseKimiSessions } from './kimi.js';

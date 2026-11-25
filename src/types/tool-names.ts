@@ -23,6 +23,7 @@ export const TOOL_NAMES = Object.freeze([
   'qwen-code',
   'grok',
   'caveman',
+  'dsh',
 ] as const);
 
 /** Source CLI tool — derived from TOOL_NAMES, never defined manually */

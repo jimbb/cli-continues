@@ -16,6 +16,7 @@ import {
   extractCrushContext,
   extractCursorContext,
   extractDroidContext,
+  extractDshContext,
   extractGeminiContext,
   extractGrokContext,
   extractKiloCodeContext,
@@ -34,6 +35,7 @@ import {
   parseCrushSessions,
   parseCursorSessions,
   parseDroidSessions,
+  parseDshSessions,
   parseGeminiSessions,
   parseGrokSessions,
   parseKiloCodeSessions,
@@ -67,6 +69,7 @@ const ALL_SOURCES: SessionSource[] = [
   'qwen-code',
   'grok',
   'caveman',
+  'dsh',
 ];
 
 const parsers: Record<SessionSource, () => Promise<UnifiedSession[]>> = {
@@ -88,6 +91,7 @@ const parsers: Record<SessionSource, () => Promise<UnifiedSession[]>> = {
   'qwen-code': parseQwenCodeSessions,
   grok: parseGrokSessions,
   caveman: parseCavemanSessions,
+  dsh: parseDshSessions,
 };
 
 const extractors: Record<SessionSource, (s: UnifiedSession) => Promise<SessionContext>> = {
@@ -109,6 +113,7 @@ const extractors: Record<SessionSource, (s: UnifiedSession) => Promise<SessionCo
   'qwen-code': extractQwenCodeContext,
   grok: extractGrokContext,
   caveman: extractCavemanContext,
+  dsh: extractDshContext,
 };
 
 async function main() {
