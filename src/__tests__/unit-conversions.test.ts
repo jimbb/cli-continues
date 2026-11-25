@@ -16,10 +16,13 @@ import {
   createClaudeFixture,
   createClineFixture,
   createCodexFixture,
+  createCommandCodeFixture,
   createCopilotFixture,
   createCrushFixture,
   createCursorFixture,
+  createDevinFixture,
   createDroidFixture,
+  createDshFixture,
   createGeminiFixture,
   createGrokFixture,
   createKiloCodeFixture,
@@ -461,6 +464,9 @@ function parseQwenCodeFixtureMessages(filePath: string): ConversationMessage[] {
 
 // Derive from registry — automatically picks up new tools
 import { extractCavemanContext } from '../parsers/caveman.js';
+import { extractCommandCodeContext } from '../parsers/commandcode.js';
+import { extractDevinContext } from '../parsers/devin.js';
+import { extractDshContext } from '../parsers/dsh.js';
 import { ALL_TOOLS } from '../parsers/registry.js';
 
 const ALL_SOURCES: readonly SessionSource[] = ALL_TOOLS;
@@ -1012,6 +1018,61 @@ beforeAll(async () => {
     originalPath: file,
     summary: 'Fix auth bug',
   });
+
+  // Devin CLI (SQLite) — driven by createDevinFixture() + real extractor
+  fixtures.devin = createDevinFixture();
+  const devinDbPath = path.join(fixtures.devin.root, 'sessions.db');
+  contexts.devin = await extractDevinContext({
+    id: 'test-devin-session-1',
+    source: 'devin',
+    cwd: '/home/user/project',
+    repo: 'user/project',
+    lines: 8,
+    bytes: 0,
+    createdAt: now,
+    updatedAt: now,
+    originalPath: devinDbPath,
+    summary: 'Fix auth bug',
+    model: 'claude-opus-4-6',
+  });
+
+  // Command Code (JSONL + meta.json) — driven by createCommandCodeFixture() + real extractor
+  fixtures.cmd = createCommandCodeFixture();
+  const cmdFile = path.join(fixtures.cmd.root, 'projects', 'home-user-project', 'test-cmd-session-1.jsonl');
+  contexts.cmd = await extractCommandCodeContext({
+    id: 'test-cmd-session-1',
+    source: 'cmd',
+    cwd: '/home/user/project',
+    repo: 'user/project',
+    lines: 6,
+    bytes: fs.statSync(cmdFile).size,
+    createdAt: now,
+    updatedAt: now,
+    originalPath: cmdFile,
+    summary: 'Fix auth bug',
+    model: 'deepseek/deepseek-v4.1-flash',
+  });
+});
+
+// DeepSeek Harness (v4 zstd-compressed JSONL): built with the real extractor
+beforeAll(async () => {
+  const fixture = createDshFixture();
+  fixtures.dsh = fixture;
+  const now = new Date();
+  contexts.dsh = await extractDshContext({
+    id: fixture.sessionId,
+    source: 'dsh',
+    cwd: '/home/user/project',
+    repo: 'user/project',
+    branch: 'main',
+    lines: 19,
+    bytes: fs.statSync(fixture.sessionFile).size,
+    createdAt: now,
+    updatedAt: now,
+    originalPath: fixture.sessionFile,
+    summary: 'Fix auth bug',
+    model: 'dsh-deepseek-flash',
+  });
 });
 
 afterAll(() => {
@@ -1156,6 +1217,27 @@ describe('Low-Level Fixture Parsing', () => {
       expect(msg.content).not.toContain('tool_use');
       expect(msg.content).not.toContain('tool_result');
     }
+  });
+
+  it('Devin: extracts user and assistant messages from the main chain', () => {
+    const msgs = contexts.devin.recentMessages;
+    expect(msgs.filter((m) => m.role === 'user')).toHaveLength(2);
+    expect(msgs.some((m) => m.content.includes('Fix the authentication bug'))).toBe(true);
+    expect(msgs.some((m) => m.content.includes('token validation was missing'))).toBe(true);
+    expect(msgs.some((m) => m.content.includes('try-catch'))).toBe(true);
+  });
+
+  it('Command Code: extracts user and assistant messages from v1.93+ JSONL', () => {
+    const msgs = contexts.cmd.recentMessages;
+    expect(msgs).toHaveLength(4);
+    expect(msgs[0].role).toBe('user');
+    expect(msgs[0].content).toContain('Fix the authentication bug');
+    expect(msgs[1].role).toBe('assistant');
+    expect(msgs[1].content).toContain('token validation was missing');
+    expect(msgs[2].role).toBe('user');
+    expect(msgs[2].content).toContain('error handling');
+    expect(msgs[3].role).toBe('assistant');
+    expect(msgs[3].content).toContain('try-catch');
   });
 });
 

@@ -31,12 +31,10 @@ export interface HandoffContextOptions {
 export function configuredToolArgs(tool: SessionSource): string[] {
   // ponytail: whitespace split, no quoting; add a shell-words parser if someone needs spaces inside an arg
   const variable = `CONTINUES_${tool.toUpperCase().replace(/-/g, '_')}_ARGS`;
-  const raw =
-    process.env[variable]?.trim() || (tool === 'antigravity' ? process.env.CONTINUES_AGY_ARGS?.trim() : undefined);
-  const activeVar =
-    !process.env[variable]?.trim() && tool === 'antigravity' && process.env.CONTINUES_AGY_ARGS?.trim()
-      ? 'CONTINUES_AGY_ARGS'
-      : variable;
+  const aliasVar =
+    tool === 'antigravity' ? 'CONTINUES_AGY_ARGS' : tool === 'cmd' ? 'CONTINUES_COMMANDCODE_ARGS' : undefined;
+  const raw = process.env[variable]?.trim() || (aliasVar ? process.env[aliasVar]?.trim() : undefined);
+  const activeVar = !process.env[variable]?.trim() && aliasVar && process.env[aliasVar]?.trim() ? aliasVar : variable;
   // Windows shims run through cmd.exe even when spawn receives an argv array.
   // Reject operators, expansion, quoting, and command separators, without
   // echoing the value (which may contain private paths or credentials).
@@ -140,10 +138,26 @@ function resolveHandoffConfig(options?: HandoffContextOptions): VerbosityConfig 
 }
 
 /**
+ * Directory to launch the target CLI in: the session's own cwd, or the current
+ * directory when that folder has since been deleted (spawn would fail with ENOENT).
+ */
+export function launchCwd(session: UnifiedSession): string {
+  if (!session.cwd) return process.cwd();
+  if (fs.existsSync(session.cwd)) return session.cwd;
+  console.warn(`Session folder ${session.cwd} no longer exists; launching in ${process.cwd()}`);
+  return process.cwd();
+}
+
+/** chdir into the session's folder when it still exists (launchCwd warns when it doesn't). */
+export function enterSessionDir(session: UnifiedSession): void {
+  if (session.cwd && fs.existsSync(session.cwd)) process.chdir(session.cwd);
+}
+
+/**
  * Resume a session using native CLI commands
  */
 export async function nativeResume(session: UnifiedSession): Promise<void> {
-  const cwd = session.cwd || process.cwd();
+  const cwd = launchCwd(session);
   const adapter = adapters[session.source];
   if (!adapter) throw new UnknownSourceError(session.source);
   const configured = configuredToolArgs(session.source);
@@ -173,7 +187,7 @@ export async function crossToolResume(
   const configured = configuredToolArgs(target);
 
   const context = await extractContext(session, resolveHandoffConfig(contextOptions));
-  const cwd = session.cwd || process.cwd();
+  const cwd = launchCwd(session);
 
   // Always save handoff file to project directory (for sandboxed tools like Gemini)
   const localPath = path.join(cwd, handoffFileName(session));

@@ -11,10 +11,13 @@ export {
   parseRooCodeSessions,
 } from './cline.js';
 export { extractCodexContext, parseCodexSessions } from './codex.js';
+export { extractCommandCodeContext, parseCommandCodeSessions } from './commandcode.js';
 export { extractCopilotContext, parseCopilotSessions } from './copilot.js';
 export { extractCrushContext, parseCrushSessions } from './crush.js';
 export { extractCursorContext, parseCursorSessions } from './cursor.js';
+export { extractDevinContext, parseDevinSessions } from './devin.js';
 export { extractDroidContext, parseDroidSessions } from './droid.js';
+export { extractDshContext, parseDshSessions } from './dsh.js';
 export { extractGeminiContext, parseGeminiSessions } from './gemini.js';
 export { extractGrokContext, parseGrokSessions } from './grok.js';
 export { extractKimiContext, parseKimiSessions } from './kimi.js';

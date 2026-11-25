@@ -22,10 +22,13 @@ import {
   extractClaudeContext,
   extractClineContext,
   extractCodexContext,
+  extractCommandCodeContext,
   extractCopilotContext,
   extractCrushContext,
   extractCursorContext,
+  extractDevinContext,
   extractDroidContext,
+  extractDshContext,
   extractGeminiContext,
   extractGrokContext,
   extractKiloCodeContext,
@@ -40,10 +43,13 @@ import {
   parseClaudeSessions,
   parseClineSessions,
   parseCodexSessions,
+  parseCommandCodeSessions,
   parseCopilotSessions,
   parseCrushSessions,
   parseCursorSessions,
+  parseDevinSessions,
   parseDroidSessions,
+  parseDshSessions,
   parseGeminiSessions,
   parseGrokSessions,
   parseKiloCodeSessions,
@@ -75,6 +81,9 @@ const ALL_SOURCES: SessionSource[] = [
   'qwen-code',
   'grok',
   'caveman',
+  'devin',
+  'cmd',
+  'dsh',
 ];
 
 const parsers: Record<SessionSource, () => Promise<UnifiedSession[]>> = {
@@ -96,6 +105,9 @@ const parsers: Record<SessionSource, () => Promise<UnifiedSession[]>> = {
   'qwen-code': parseQwenCodeSessions,
   grok: parseGrokSessions,
   caveman: parseCavemanSessions,
+  devin: parseDevinSessions,
+  cmd: parseCommandCodeSessions,
+  dsh: parseDshSessions,
 };
 
 const extractors: Record<SessionSource, (s: UnifiedSession) => Promise<SessionContext>> = {
@@ -117,6 +129,9 @@ const extractors: Record<SessionSource, (s: UnifiedSession) => Promise<SessionCo
   'qwen-code': extractQwenCodeContext,
   grok: extractGrokContext,
   caveman: extractCavemanContext,
+  devin: extractDevinContext,
+  cmd: extractCommandCodeContext,
+  dsh: extractDshContext,
 };
 
 // Results directory
@@ -310,6 +325,9 @@ describe('E2E: 20 Cross-Tool Conversion Paths', () => {
           'qwen-code': 'Qwen Code',
           grok: 'Grok Build',
           caveman: 'Caveman Code',
+          devin: 'Devin CLI',
+          cmd: 'Command Code',
+          dsh: 'DeepSeek Harness',
         };
         const sourceLabel = sourceLabels[source];
 

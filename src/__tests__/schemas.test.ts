@@ -21,6 +21,9 @@ import {
   CopilotEventSchema,
   CopilotWorkspaceSchema,
   CursorTranscriptLineSchema,
+  DevinChatMessageSchema,
+  DevinSessionRowSchema,
+  DevinToolCallSchema,
   DroidCompactionStateSchema,
   DroidEventSchema,
   DroidMessageEventSchema,
@@ -50,8 +53,8 @@ import {
 // ── tool-names.ts ────────────────────────────────────────────────────────────
 
 describe('TOOL_NAMES', () => {
-  it('contains exactly 18 tools', () => {
-    expect(TOOL_NAMES).toHaveLength(18);
+  it('contains exactly 21 tools', () => {
+    expect(TOOL_NAMES).toHaveLength(21);
   });
 
   it('includes all known tools', () => {
@@ -74,6 +77,9 @@ describe('TOOL_NAMES', () => {
       'qwen-code',
       'grok',
       'caveman',
+      'devin',
+      'cmd',
+      'dsh',
     ];
     expect([...TOOL_NAMES]).toEqual(expected);
   });
@@ -107,10 +113,14 @@ describe('Canonical tool name sets', () => {
     expect(EDIT_TOOLS.has('morph___edit_file')).toBe(true);
   });
 
-  it('resolves agy alias to antigravity and classifies Antigravity CLI tool names', () => {
+  it('resolves agy and commandcode aliases and classifies CLI tool names', () => {
     expect(resolveSessionSource('agy')).toBe('antigravity');
     expect(resolveSessionSource('AGY')).toBe('antigravity');
     expect(resolveSessionSource('antigravity')).toBe('antigravity');
+    expect(resolveSessionSource('commandcode')).toBe('cmd');
+    expect(resolveSessionSource('command-code')).toBe('cmd');
+    expect(resolveSessionSource('cmd')).toBe('cmd');
+    expect(resolveSessionSource('devin')).toBe('devin');
     expect(resolveSessionSource('unknown')).toBeUndefined();
 
     expect(classifyToolName('run_command')).toBe('shell');
@@ -119,6 +129,7 @@ describe('Canonical tool name sets', () => {
     expect(classifyToolName('replace_file_content')).toBe('edit');
     expect(classifyToolName('search_web')).toBe('search');
     expect(classifyToolName('find_by_name')).toBe('glob');
+    expect(classifyToolName('read_directory')).toBe('glob');
     expect(classifyToolName('invoke_subagent')).toBe('task');
     expect(classifyToolName('ask_question')).toBe('ask');
     expect(classifyToolName('manage_task')).toBeUndefined();
@@ -777,5 +788,43 @@ describe('SerializedSessionSchema', () => {
 
     const { lines, ...noLines } = validSession;
     expect(SerializedSessionSchema.safeParse(noLines).success).toBe(false);
+  });
+});
+
+// ── Devin CLI schemas ────────────────────────────────────────────────────────
+
+describe('Devin CLI schemas', () => {
+  it('accepts object and raw-string tool call arguments (apply_patch)', () => {
+    expect(DevinToolCallSchema.safeParse({ id: 'tc1', name: 'read', arguments: { file_path: 'a.ts' } }).success).toBe(
+      true,
+    );
+    expect(
+      DevinToolCallSchema.safeParse({
+        id: 'tc2',
+        name: 'apply_patch',
+        arguments: '*** Begin Patch\n*** Add File: a.ts\n*** End Patch',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('accepts SQLite NULLs on optional session columns and Devin 3000.14 message fields', () => {
+    expect(
+      DevinSessionRowSchema.safeParse({
+        id: 'whip-dichondra',
+        working_directory: '/home/user/project',
+        model: '',
+        title: null,
+        main_chain_id: null,
+        hidden: 0,
+      }).success,
+    ).toBe(true);
+    expect(
+      DevinChatMessageSchema.safeParse({
+        role: 'tool',
+        content: 'ok',
+        tool_call_id: 'tc1',
+        thinking: { thinking: 'step 1' },
+      }).success,
+    ).toBe(true);
   });
 });
