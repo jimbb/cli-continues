@@ -9,6 +9,7 @@ import {
   type ForwardMapResult,
   normalizeAgentSandbox,
 } from '../utils/forward-flags.js';
+import { IS_WINDOWS } from '../utils/platform.js';
 import { extractAmpContext, parseAmpSessions } from './amp.js';
 import { extractAntigravityContext, parseAntigravitySessions } from './antigravity.js';
 import { extractCavemanContext, parseCavemanSessions } from './caveman.js';
@@ -22,9 +23,11 @@ import {
   parseRooCodeSessions,
 } from './cline.js';
 import { extractCodexContext, parseCodexSessions } from './codex.js';
+import { extractCommandCodeContext, parseCommandCodeSessions } from './commandcode.js';
 import { extractCopilotContext, parseCopilotSessions } from './copilot.js';
 import { extractCrushContext, parseCrushSessions } from './crush.js';
 import { extractCursorContext, parseCursorSessions } from './cursor.js';
+import { extractDevinContext, parseDevinSessions } from './devin.js';
 import { extractDroidContext, parseDroidSessions } from './droid.js';
 import { extractGeminiContext, parseGeminiSessions } from './gemini.js';
 import { extractGrokContext, parseGrokSessions } from './grok.js';
@@ -1064,6 +1067,42 @@ register({
   nativeResumeArgs: (s) => ['--session', s.originalPath],
   crossToolArgs: (prompt) => [prompt],
   resumeCommandDisplay: (s) => `caveman-code --session ${s.originalPath}`,
+});
+
+// ── Devin CLI ────────────────────────────────────────────────────────
+register({
+  name: 'devin',
+  label: 'Devin CLI',
+  color: chalk.hex('#A78BFA'),
+  storagePath: '~/.local/share/devin/cli/sessions.db (also cli-next/)',
+  envVar: 'DEVIN_CLI_HOME',
+  extraEnvVars: ['XDG_DATA_HOME'],
+  binaryName: 'devin',
+  parseSessions: parseDevinSessions,
+  extractContext: extractDevinContext,
+  nativeResumeArgs: (s) => ['-r', s.id],
+  // Devin CLI treats positional args before `--` as Desktop [PATH]... targets;
+  // interactive prompts require `-- <prompt>` (verified against devin 3000.14).
+  crossToolArgs: (prompt) => ['--', prompt],
+  resumeCommandDisplay: (s) => `devin -r ${s.id}`,
+});
+
+// ── Command Code ─────────────────────────────────────────────────────
+register({
+  name: 'cmd',
+  label: 'Command Code',
+  color: chalk.hex('#38BDF8'),
+  storagePath: '~/.commandcode/projects/',
+  envVar: 'COMMANDCODE_HOME',
+  // Prefer `commandcode` everywhere; never include bare `cmd` on Windows where
+  // `where cmd` resolves to System32\cmd.exe.
+  binaryName: 'commandcode',
+  binaryFallbacks: IS_WINDOWS ? ['cmdc', 'command-code'] : ['cmd', 'cmdc', 'command-code'],
+  parseSessions: parseCommandCodeSessions,
+  extractContext: extractCommandCodeContext,
+  nativeResumeArgs: (s) => ['--resume', s.id],
+  crossToolArgs: (prompt) => [prompt],
+  resumeCommandDisplay: (s) => `commandcode --resume ${s.id}`,
 });
 
 function mapGrokFlags(context: ForwardFlagMapContext): ForwardMapResult {

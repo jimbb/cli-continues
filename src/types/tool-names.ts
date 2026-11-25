@@ -23,6 +23,8 @@ export const TOOL_NAMES = Object.freeze([
   'qwen-code',
   'grok',
   'caveman',
+  'devin',
+  'cmd',
 ] as const);
 
 /** Source CLI tool — derived from TOOL_NAMES, never defined manually */
@@ -35,6 +37,8 @@ export function isSessionSource(value: string): value is SessionSource {
 /** CLI aliases that resolve to a canonical SessionSource (e.g. `agy` -> `antigravity`). */
 const TOOL_ALIASES: Readonly<Record<string, SessionSource>> = Object.freeze({
   agy: 'antigravity',
+  commandcode: 'cmd',
+  'command-code': 'cmd',
 });
 
 export function resolveSessionSource(value: string): SessionSource | undefined {
@@ -116,6 +120,7 @@ export const GLOB_TOOLS: ReadonlySet<string> = new Set([
   'FindFiles',
   'ReadFolder',
   'list_dir',
+  'read_directory',
 ]);
 
 /** Web search tools */

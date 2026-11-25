@@ -1,10 +1,13 @@
 /**
  * Test fixtures - sanitized session data for supported parsers
  */
+import { createRequire } from 'node:module';
 import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+
+const require = createRequire(import.meta.url);
 
 export interface FixtureDir {
   root: string;
@@ -1464,6 +1467,229 @@ export function createOpenCodeJsonFixture(): FixtureDir {
       type: 'text',
       text: 'I found the issue. The token validation was missing.',
     }),
+  );
+
+  return {
+    root,
+    cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+/**
+ * Create a temporary Devin CLI sessions.db SQLite fixture matching the schema
+ * the Devin parser reads (see src/parsers/devin.ts). Mirrors the real layout:
+ * a `sessions` row plus a `message_nodes` conversation tree whose
+ * `chat_message` blobs carry role/content/tool_calls/tool_call_id/thinking.
+ */
+export function createDevinFixture(): FixtureDir {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'test-devin-'));
+  const dbPath = path.join(root, 'sessions.db');
+
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(dbPath);
+
+  db.exec(`
+    CREATE TABLE sessions (
+      id TEXT PRIMARY KEY,
+      working_directory TEXT,
+      backend_type TEXT,
+      model TEXT,
+      agent_mode TEXT,
+      created_at INTEGER,
+      last_activity_at INTEGER,
+      title TEXT,
+      main_chain_id INTEGER,
+      shell_last_seen_index INTEGER,
+      cogs_json TEXT,
+      workspace_dirs TEXT,
+      hidden INTEGER,
+      metadata TEXT
+    );
+    CREATE TABLE message_nodes (
+      row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT,
+      node_id INTEGER,
+      parent_node_id INTEGER,
+      chat_message TEXT,
+      created_at INTEGER,
+      metadata TEXT
+    );
+  `);
+
+  // Unix-second epochs, matching the real Devin CLI.
+  const t0 = 1_734_000_000;
+  db.prepare(
+    `INSERT INTO sessions (
+       id, working_directory, backend_type, model, agent_mode, created_at,
+       last_activity_at, title, main_chain_id, shell_last_seen_index,
+       cogs_json, workspace_dirs, hidden, metadata
+     ) VALUES (?, ?, 'local', 'claude-opus-4-6', 'exec', ?, ?, ?, 8, 0, '[]', '[]', 0, '{}')`,
+  ).run('test-devin-session-1', '/home/user/project', t0, t0 + 40, 'Fix auth bug');
+
+  const insertNode = db.prepare(
+    `INSERT INTO message_nodes (session_id, node_id, parent_node_id, chat_message, created_at, metadata)
+     VALUES (?, ?, ?, ?, ?, NULL)`,
+  );
+
+  const node = (nodeId: number, parentId: number | null, chat: Record<string, unknown>, createdAt: number): void => {
+    insertNode.run('test-devin-session-1', nodeId, parentId, JSON.stringify(chat), createdAt);
+  };
+
+  node(1, null, { message_id: 'm1', role: 'system', content: 'You are Devin, an interactive command line agent.' }, t0);
+  node(2, 1, { message_id: 'm2', role: 'user', content: 'Fix the authentication bug in login.ts' }, t0 + 10);
+  node(
+    3,
+    2,
+    {
+      message_id: 'm3',
+      role: 'assistant',
+      content: '',
+      thinking: { thinking: 'Checking login.ts first to inspect token validation logic.' },
+      tool_calls: [
+        {
+          id: 'tc-001',
+          name: 'read',
+          arguments: { file_path: '/home/user/project/login.ts' },
+          index: 0,
+          kind: 'function',
+        },
+      ],
+      metadata: {
+        generation_model: 'claude-opus-4-6',
+        metrics: { input_tokens: 1200, output_tokens: 180, cache_read_tokens: 600, cache_creation_tokens: 100 },
+      },
+    },
+    t0 + 15,
+  );
+  node(
+    4,
+    3,
+    { message_id: 'm4', role: 'tool', tool_call_id: 'tc-001', content: 'export function login() { ... }' },
+    t0 + 16,
+  );
+  node(
+    5,
+    4,
+    {
+      message_id: 'm5',
+      role: 'assistant',
+      content: 'I found the issue in login.ts. The token validation was missing.',
+      tool_calls: [
+        {
+          id: 'tc-002',
+          name: 'edit',
+          arguments: { file_path: '/home/user/project/login.ts', old_str: 'old code', new_str: 'new code' },
+          index: 0,
+          kind: 'function',
+        },
+      ],
+    },
+    t0 + 20,
+  );
+  node(6, 5, { message_id: 'm6', role: 'tool', tool_call_id: 'tc-002', content: 'File edited successfully' }, t0 + 21);
+  node(7, 6, { message_id: 'm7', role: 'user', content: 'Great, please also add error handling' }, t0 + 30);
+  node(
+    8,
+    7,
+    { message_id: 'm8', role: 'assistant', content: 'Done. I added try-catch blocks and proper error messages.' },
+    t0 + 40,
+  );
+
+  db.close();
+
+  return {
+    root,
+    cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+/**
+ * Create a temporary directory with Command Code v1.93+ JSONL + meta.json fixtures.
+ */
+export function createCommandCodeFixture(): FixtureDir {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'test-commandcode-'));
+  const projectDir = path.join(root, 'projects', 'home-user-project');
+  fs.mkdirSync(projectDir, { recursive: true });
+
+  const sessionId = 'test-cmd-session-1';
+  const sessionFile = path.join(projectDir, `${sessionId}.jsonl`);
+  const records = [
+    {
+      type: 'session',
+      version: 1,
+      id: sessionId,
+      timestamp: '2026-11-17T10:00:00.000Z',
+      cwd: '/home/user/project',
+    },
+    {
+      type: 'message',
+      id: 'u1',
+      parentId: null,
+      timestamp: '2026-11-17T10:00:01.000Z',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'Fix the authentication bug in login.ts' }],
+      },
+    },
+    {
+      type: 'message',
+      id: 'a1',
+      parentId: 'u1',
+      timestamp: '2026-11-17T10:00:05.000Z',
+      model: 'deepseek/deepseek-v4.1-flash',
+      usage: { inputTokens: 1500, outputTokens: 120, cacheReadTokens: 800, cacheWriteTokens: 0 },
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'Inspecting login.ts to find where token validation is skipped.' },
+          { type: 'text', text: 'I found the issue in login.ts. The token validation was missing.' },
+          {
+            type: 'tool_use',
+            id: 'call_1',
+            name: 'edit_file',
+            input: { file_path: '/home/user/project/login.ts', old_string: 'old', new_string: 'new' },
+          },
+        ],
+      },
+    },
+    {
+      type: 'message',
+      id: 'tr1',
+      parentId: 'a1',
+      timestamp: '2026-11-17T10:00:06.000Z',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'call_1', content: [{ type: 'text', text: 'Edited login.ts' }] }],
+      },
+    },
+    {
+      type: 'message',
+      id: 'u2',
+      parentId: 'tr1',
+      timestamp: '2026-11-17T10:00:10.000Z',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'Great, please also add error handling' }],
+      },
+    },
+    {
+      type: 'message',
+      id: 'a2',
+      parentId: 'u2',
+      timestamp: '2026-11-17T10:00:15.000Z',
+      model: 'deepseek/deepseek-v4.1-flash',
+      usage: { inputTokens: 1800, outputTokens: 95, cacheReadTokens: 1200, cacheWriteTokens: 0 },
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Done. I added try-catch blocks and proper error messages.' }],
+      },
+    },
+  ];
+  fs.writeFileSync(sessionFile, `${records.map((r) => JSON.stringify(r)).join('\n')}\n`, 'utf8');
+  fs.writeFileSync(
+    path.join(projectDir, `${sessionId}.meta.json`),
+    JSON.stringify({ title: 'Fix auth bug', traceIds: ['trace-1'] }),
+    'utf8',
   );
 
   return {

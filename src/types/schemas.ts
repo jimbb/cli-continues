@@ -706,6 +706,72 @@ export const QwenChatRecordSchema = z
 
 export type QwenChatRecord = z.infer<typeof QwenChatRecordSchema>;
 
+// ── Devin CLI ───────────────────────────────────────────────────────────────
+// sessions.db (SQLite): `sessions` rows + a `message_nodes` conversation tree.
+// chat_message blobs are JSON with role/content/tool_calls/thinking/tool_call_id.
+
+export const DevinToolCallSchema = z
+  .object({
+    id: z.string().optional(),
+    name: z.string(),
+    arguments: z
+      .union([z.record(z.string(), z.unknown()), z.string()])
+      .nullable()
+      .optional(),
+    index: z.number().optional(),
+    kind: z.string().optional(),
+  })
+  .passthrough();
+
+export const DevinThinkingSchema = z.union([
+  z.string(),
+  z
+    .object({
+      thinking: z.string().optional(),
+      text: z.string().optional(),
+    })
+    .passthrough(),
+]);
+
+export const DevinChatMessageSchema = z
+  .object({
+    message_id: z.string().nullable().optional(),
+    role: z.enum(['user', 'assistant', 'tool', 'system']),
+    content: z.string().nullable().optional(),
+    tool_calls: z.array(DevinToolCallSchema).nullable().optional(),
+    tool_call_id: z.string().nullable().optional(),
+    thinking: DevinThinkingSchema.nullable().optional(),
+    metadata: z.record(z.string(), z.unknown()).nullable().optional(),
+  })
+  .passthrough();
+
+export const DevinSessionRowSchema = z
+  .object({
+    id: z.string(),
+    working_directory: z.string().nullable().optional(),
+    model: z.string().nullable().optional(),
+    created_at: z.number().nullable().optional(),
+    last_activity_at: z.number().nullable().optional(),
+    title: z.string().nullable().optional(),
+    main_chain_id: z.number().nullable().optional(),
+    hidden: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+export const DevinMessageNodeRowSchema = z
+  .object({
+    node_id: z.number(),
+    parent_node_id: z.number().nullable().optional(),
+    chat_message: z.string().nullable().optional(),
+    created_at: z.number().nullable().optional(),
+  })
+  .passthrough();
+
+export type DevinToolCall = z.infer<typeof DevinToolCallSchema>;
+export type DevinChatMessage = z.infer<typeof DevinChatMessageSchema>;
+export type DevinSessionRow = z.infer<typeof DevinSessionRowSchema>;
+export type DevinMessageNodeRow = z.infer<typeof DevinMessageNodeRowSchema>;
+
 // ── Serialized Session (Index JSONL) ────────────────────────────────────────
 
 export const SerializedSessionSchema = z.object({
