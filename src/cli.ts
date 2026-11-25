@@ -74,7 +74,7 @@ process.on('SIGTERM', () => {
 program
   .name('continues')
   .description(
-    'Never lose context. Resume any AI coding session across Claude Code, Codex, Copilot, Gemini CLI, Cursor, Amp, Cline, Roo Code, Kilo Code, Kiro, Crush, OpenCode, Droid, Antigravity, Grok Build, Caveman Code, Devin CLI & Command Code.',
+    'Never lose context. Resume any AI coding session across Claude Code, Codex, Copilot, Gemini CLI, Cursor, Amp, Cline, Roo Code, Kilo Code, Kiro, Crush, OpenCode, Droid, Antigravity, Grok Build, Caveman Code, Devin CLI, Command Code & DeepSeek Harness.',
   )
   .version(VERSION)
   .option('--verbose', 'Show info-level logs')

@@ -18,6 +18,7 @@ import {
   extractCursorContext,
   extractDevinContext,
   extractDroidContext,
+  extractDshContext,
   extractGeminiContext,
   extractGrokContext,
   extractKiloCodeContext,
@@ -38,6 +39,7 @@ import {
   parseCursorSessions,
   parseDevinSessions,
   parseDroidSessions,
+  parseDshSessions,
   parseGeminiSessions,
   parseGrokSessions,
   parseKiloCodeSessions,
@@ -73,6 +75,7 @@ const ALL_SOURCES: SessionSource[] = [
   'caveman',
   'devin',
   'cmd',
+  'dsh',
 ];
 
 const parsers: Record<SessionSource, () => Promise<UnifiedSession[]>> = {
@@ -96,6 +99,7 @@ const parsers: Record<SessionSource, () => Promise<UnifiedSession[]>> = {
   caveman: parseCavemanSessions,
   devin: parseDevinSessions,
   cmd: parseCommandCodeSessions,
+  dsh: parseDshSessions,
 };
 
 const extractors: Record<SessionSource, (s: UnifiedSession) => Promise<SessionContext>> = {
@@ -119,6 +123,7 @@ const extractors: Record<SessionSource, (s: UnifiedSession) => Promise<SessionCo
   caveman: extractCavemanContext,
   devin: extractDevinContext,
   cmd: extractCommandCodeContext,
+  dsh: extractDshContext,
 };
 
 async function main() {

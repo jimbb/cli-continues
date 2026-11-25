@@ -29,6 +29,7 @@ import { extractCrushContext, parseCrushSessions } from './crush.js';
 import { extractCursorContext, parseCursorSessions } from './cursor.js';
 import { extractDevinContext, parseDevinSessions } from './devin.js';
 import { extractDroidContext, parseDroidSessions } from './droid.js';
+import { extractDshContext, parseDshSessions } from './dsh.js';
 import { extractGeminiContext, parseGeminiSessions } from './gemini.js';
 import { extractGrokContext, parseGrokSessions } from './grok.js';
 import { extractKimiContext, parseKimiSessions } from './kimi.js';
@@ -1103,6 +1104,22 @@ register({
   nativeResumeArgs: (s) => ['--resume', s.id],
   crossToolArgs: (prompt) => [prompt],
   resumeCommandDisplay: (s) => `commandcode --resume ${s.id}`,
+});
+
+// ── DeepSeek Harness (dsh-tui) ───────────────────────────────────────
+register({
+  name: 'dsh',
+  label: 'DeepSeek Harness',
+  color: chalk.hex('#4D6BFE'),
+  storagePath: '~/.dsh/sessions/',
+  envVar: 'DSH_HOME',
+  binaryName: 'dsh-tui',
+  binaryFallbacks: ['dst'],
+  parseSessions: parseDshSessions,
+  extractContext: extractDshContext,
+  nativeResumeArgs: (s) => ['--resume', s.id],
+  crossToolArgs: (prompt) => ['--', prompt],
+  resumeCommandDisplay: (s) => `dsh-tui --resume ${s.id}`,
 });
 
 function mapGrokFlags(context: ForwardFlagMapContext): ForwardMapResult {

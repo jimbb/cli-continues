@@ -2,6 +2,8 @@
  * Test fixtures - sanitized session data for supported parsers
  */
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import * as zlib from 'node:zlib';
 import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -1694,6 +1696,39 @@ export function createCommandCodeFixture(): FixtureDir {
 
   return {
     root,
+    cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+/**
+ * Create a temporary DeepSeek Harness (`$DSH_HOME`) fixture directory from the
+ * sanitized `dsh-session.v4.jsonl` fixture, compressed with zstd when supported
+ * by the current Node runtime (or plain JSONL otherwise).
+ */
+export function createDshFixture(): FixtureDir & { sessionFile: string; sessionId: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'test-dsh-'));
+  const sessionId = 'd5h00000-1111-4222-8333-444444444444';
+  const sessionDir = path.join(root, 'sessions', '--home-user-project--', sessionId);
+  fs.mkdirSync(sessionDir, { recursive: true });
+
+  const fixturePath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dsh-session.v4.jsonl');
+  const rawJsonl = fs.readFileSync(fixturePath);
+  const compressFn = (zlib as unknown as { zstdCompressSync?: (buf: Buffer) => Buffer }).zstdCompressSync;
+
+  let sessionFile: string;
+  if (typeof compressFn === 'function') {
+    sessionFile = path.join(sessionDir, 'session.v4.jsonl.zstd');
+    fs.writeFileSync(sessionFile, compressFn(rawJsonl));
+  } else {
+    sessionFile = path.join(sessionDir, 'session.v4.jsonl');
+    fs.writeFileSync(sessionFile, rawJsonl);
+  }
+  fs.writeFileSync(path.join(sessionDir, 'session.lock'), '');
+
+  return {
+    root,
+    sessionFile,
+    sessionId,
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
   };
 }

@@ -53,8 +53,8 @@ import {
 // ── tool-names.ts ────────────────────────────────────────────────────────────
 
 describe('TOOL_NAMES', () => {
-  it('contains exactly 20 tools', () => {
-    expect(TOOL_NAMES).toHaveLength(20);
+  it('contains exactly 21 tools', () => {
+    expect(TOOL_NAMES).toHaveLength(21);
   });
 
   it('includes all known tools', () => {
@@ -79,6 +79,7 @@ describe('TOOL_NAMES', () => {
       'caveman',
       'devin',
       'cmd',
+      'dsh',
     ];
     expect([...TOOL_NAMES]).toEqual(expected);
   });

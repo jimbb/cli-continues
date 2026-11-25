@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { VerbosityConfig } from '../config/index.js';
 import { getPreset, loadConfig } from '../config/index.js';
+import { readDshEvents } from '../parsers/dsh.js';
 import { adapters } from '../parsers/registry.js';
 import type { ReasoningStep, SessionContext, UnifiedSession } from '../types/index.js';
 import { classifyToolName } from '../types/tool-names.js';
@@ -46,6 +47,7 @@ function getSessionFormat(source: string, session?: UnifiedSession): SessionForm
     case 'grok':
     case 'caveman':
     case 'cmd':
+    case 'dsh':
       return 'jsonl';
     case 'antigravity': {
       // Antigravity CLI (agy) stores sessions as JSONL transcripts
@@ -364,6 +366,84 @@ function analyzeAntigravityCliMessages(messages: Array<Record<string, unknown>>)
   };
 }
 
+/**
+ * Analyze raw DeepSeek Harness (v4 JSONL) session events.
+ */
+function analyzeDshMessages(messages: Array<Record<string, unknown>>): {
+  events: RawEventCounts;
+  blocks: ContentBlockCounts;
+  tools: ToolCategoryCounts;
+  model: string | undefined;
+} {
+  const eventMap = new Map<string, number>();
+  const blockMap = new Map<string, number>();
+  const toolMap = new Map<string, number>();
+  const seenToolCalls = new Set<string>();
+  let model: string | undefined;
+
+  for (const msg of messages) {
+    const type = (msg.type as string) || 'unknown';
+    eventMap.set(type, (eventMap.get(type) || 0) + 1);
+    const data = msg.data as Record<string, unknown> | undefined;
+    if (!data) continue;
+
+    if (type === 'model/selection' && typeof data.model === 'string') {
+      model = data.model;
+    } else if (type === 'user/message') {
+      const content = data.content;
+      if (Array.isArray(content)) {
+        for (const block of content as Array<{ type?: string }>) {
+          const bt = block.type || 'unknown';
+          blockMap.set(bt, (blockMap.get(bt) || 0) + 1);
+        }
+      }
+    } else if (type === 'assistant/message') {
+      const inner = data.message as { content?: unknown; source?: { model?: string } } | undefined;
+      if (!model && typeof inner?.source?.model === 'string') model = inner.source.model;
+      if (Array.isArray(inner?.content)) {
+        for (const block of inner.content as Array<{ type?: string; id?: string; name?: string }>) {
+          const bt = block.type || 'unknown';
+          blockMap.set(bt, (blockMap.get(bt) || 0) + 1);
+          if (bt === 'tool-call' && block.name) {
+            if (block.id) seenToolCalls.add(block.id);
+            const category = classifyToolName(block.name === 'pwsh' ? 'bash' : block.name);
+            if (category) {
+              const label = CATEGORY_LABELS[category] || category;
+              toolMap.set(label, (toolMap.get(label) || 0) + 1);
+            }
+          }
+        }
+      }
+    } else if (type === 'tool/call') {
+      const callId = typeof data.callId === 'string' ? data.callId : undefined;
+      const name = typeof data.name === 'string' ? data.name : '';
+      if (name && (!callId || !seenToolCalls.has(callId))) {
+        if (callId) seenToolCalls.add(callId);
+        const category = classifyToolName(name === 'pwsh' ? 'bash' : name);
+        if (category) {
+          const label = CATEGORY_LABELS[category] || category;
+          toolMap.set(label, (toolMap.get(label) || 0) + 1);
+        }
+      }
+    } else if (type === 'tool/result') {
+      blockMap.set('tool_result', (blockMap.get('tool_result') || 0) + 1);
+    }
+  }
+
+  return {
+    events: { byType: eventMap, total: messages.length },
+    blocks: {
+      byType: blockMap,
+      total: Array.from(blockMap.values()).reduce((a, b) => a + b, 0),
+    },
+    tools: {
+      byType: toolMap,
+      total: Array.from(toolMap.values()).reduce((a, b) => a + b, 0),
+    },
+    model,
+  };
+}
+
 const CATEGORY_LABELS: Record<string, string> = {
   shell: 'Shell/Bash',
   read: 'Read',
@@ -480,7 +560,7 @@ function renderSourceFiles(
 ): string {
   const lines: string[] = [chalk.cyan.bold('📂 Source Files')];
 
-  const label = mainPath.endsWith('.jsonl') ? 'Main JSONL:' : 'Main file: ';
+  const label = mainPath.endsWith('.jsonl') || mainPath.endsWith('.jsonl.zstd') ? 'Main JSONL:' : 'Main file: ';
   lines.push(`  ${label}   ${chalk.gray(mainPath)} (${mainLines} lines, ${formatBytes(mainSize)})`);
 
   if (subagentFiles.length > 0) {
@@ -645,7 +725,9 @@ function renderConversionSummary(
     (events.byType.get('USER_INPUT') || 0) +
     (events.byType.get('PLANNER_RESPONSE') || 0) +
     (events.byType.get('Prompt') || 0) +
-    (events.byType.get('AssistantMessage') || 0);
+    (events.byType.get('AssistantMessage') || 0) +
+    (events.byType.get('user/message') || 0) +
+    (events.byType.get('assistant/message') || 0);
 
   const subagentsCaptured = context.sessionNotes?.subagentResults?.length || 0;
   const reasoningCaptured = context.sessionNotes?.reasoningSteps?.length || 0;
@@ -757,7 +839,9 @@ function renderTruncated(
     (events.byType.get('USER_INPUT') || 0) +
     (events.byType.get('PLANNER_RESPONSE') || 0) +
     (events.byType.get('Prompt') || 0) +
-    (events.byType.get('AssistantMessage') || 0);
+    (events.byType.get('AssistantMessage') || 0) +
+    (events.byType.get('user/message') || 0) +
+    (events.byType.get('assistant/message') || 0);
   const subsCaptured = context.sessionNotes?.subagentResults?.length || 0;
   const toolResCaptured = context.sessionNotes?.externalToolResults?.length || 0;
   const reasonCaptured = context.sessionNotes?.reasoningSteps?.length || 0;
@@ -826,7 +910,16 @@ export async function inspectSession(
   let rawEventNote = '';
 
   if (format === 'jsonl') {
-    rawMessages = await readJsonlFile<Record<string, unknown>>(rawEventPath);
+    if (session.source === 'dsh') {
+      const dshEvents = await readDshEvents(rawEventPath);
+      if (dshEvents === null) {
+        rawEventNote = '(zstd decompression unavailable on this Node runtime)';
+      } else {
+        rawMessages = dshEvents as unknown as Array<Record<string, unknown>>;
+      }
+    } else {
+      rawMessages = await readJsonlFile<Record<string, unknown>>(rawEventPath);
+    }
   } else if (format === 'json') {
     try {
       const content = fs.readFileSync(session.originalPath, 'utf-8');
@@ -849,7 +942,9 @@ export async function inspectSession(
     ? analyzeKiroCliMessages(rawMessages)
     : isAntigravityCliTranscript
       ? analyzeAntigravityCliMessages(rawMessages)
-      : analyzeRawMessages(rawMessages);
+      : session.source === 'dsh'
+        ? analyzeDshMessages(rawMessages)
+        : analyzeRawMessages(rawMessages);
 
   // 3. File stats
   const mainFileStats = fs.statSync(rawEventPath);

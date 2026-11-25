@@ -25,6 +25,7 @@ export const TOOL_NAMES = Object.freeze([
   'caveman',
   'devin',
   'cmd',
+  'dsh',
 ] as const);
 
 /** Source CLI tool — derived from TOOL_NAMES, never defined manually */

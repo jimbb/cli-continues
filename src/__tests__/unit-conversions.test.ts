@@ -22,6 +22,7 @@ import {
   createCursorFixture,
   createDevinFixture,
   createDroidFixture,
+  createDshFixture,
   createGeminiFixture,
   createGrokFixture,
   createKiloCodeFixture,
@@ -465,6 +466,7 @@ function parseQwenCodeFixtureMessages(filePath: string): ConversationMessage[] {
 import { extractCavemanContext } from '../parsers/caveman.js';
 import { extractCommandCodeContext } from '../parsers/commandcode.js';
 import { extractDevinContext } from '../parsers/devin.js';
+import { extractDshContext } from '../parsers/dsh.js';
 import { ALL_TOOLS } from '../parsers/registry.js';
 
 const ALL_SOURCES: readonly SessionSource[] = ALL_TOOLS;
@@ -1049,6 +1051,27 @@ beforeAll(async () => {
     originalPath: cmdFile,
     summary: 'Fix auth bug',
     model: 'deepseek/deepseek-v4.1-flash',
+  });
+});
+
+// DeepSeek Harness (v4 zstd-compressed JSONL): built with the real extractor
+beforeAll(async () => {
+  const fixture = createDshFixture();
+  fixtures.dsh = fixture;
+  const now = new Date();
+  contexts.dsh = await extractDshContext({
+    id: fixture.sessionId,
+    source: 'dsh',
+    cwd: '/home/user/project',
+    repo: 'user/project',
+    branch: 'main',
+    lines: 19,
+    bytes: fs.statSync(fixture.sessionFile).size,
+    createdAt: now,
+    updatedAt: now,
+    originalPath: fixture.sessionFile,
+    summary: 'Fix auth bug',
+    model: 'dsh-deepseek-flash',
   });
 });
 
