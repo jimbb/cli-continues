@@ -37,15 +37,17 @@ These are the open PRs visible on the original repository during the 2026-10-03 
 | [86](https://github.com/yigitkonur/cli-continues/pull/86) | Droid array-based todos | **Adopted** | Carried in fork commit `1a147cc`; small backward-compatible parser fix. |
 | [85](https://github.com/yigitkonur/cli-continues/pull/85) | Kimi Code v2 storage and wire schema | **Adopt after validation** | Strong parser work, but it replaces a storage schema and needs real v2 and legacy fixtures plus a local Kimi Code check. |
 | [83](https://github.com/yigitkonur/cli-continues/pull/83) | Cursor slug scan hang and cwd lookup | **Adopted** | Carried in fork commit `cf35ab0`, with a follow-up Windows cwd-form fix; prevents exponential slug probing and avoids scanning unrelated Cursor projects. |
-| [82](https://github.com/yigitkonur/cli-continues/pull/82) | Pi/OMP/CommandCode/Devin plus 7x index speedup | **Defer as a batch** | Valuable but too broad to carry atomically. Split parser integrations from index performance, then validate each tool with fixtures and real storage. |
+| [82](https://github.com/yigitkonur/cli-continues/pull/82) | Pi/OMP/CommandCode/Devin plus 7x index speedup | **Partly adopted (v4.6.0)** | Command Code and Devin CLI parsers carried in fork PR #9, fixed for Command Code 1.93.3 and Devin CLI 3000.14 against real storage. Pi/OMP and the index-performance commit (`5b91050`) stay deferred: no Pi/OMP install to validate, and the perf work should land on its own. |
 | [81](https://github.com/yigitkonur/cli-continues/pull/81) | Bound Cursor slug resolution | **Superseded by 83** | The safety cap is good, but PR 83 includes the broader cwd-scoped fix. Do not carry both without a diff comparison. |
 | [80](https://github.com/yigitkonur/cli-continues/pull/80) | Cursor path-prefixed user queries | **Adopted** | Carried in fork commit `1c82489`; preserves legitimate prompts beginning with `/` and includes a sanitized fixture. |
 | [79](https://github.com/yigitkonur/cli-continues/pull/79) | Biome cleanup | **Adopt separately** | Useful maintenance-only cleanup, but it touches many unrelated files. Carry as its own formatting commit after behavior changes are stable. |
 | [78](https://github.com/yigitkonur/cli-continues/pull/78) | Oh My Pi parser | **Adopt after validation** | Good complete parser shape, fixtures, and docs. Needs a real OMP storage discovery check before release. |
 | [77](https://github.com/yigitkonur/cli-continues/pull/77) | Antigravity `agy` binary fallback | **Adopted** | Carried in fork commit `8207e8f`; one-line compatibility fix with no storage or parser risk. |
-| [76](https://github.com/yigitkonur/cli-continues/pull/76) | Command Code parser | **Defer with 82** | Duplicated by the larger multi-tool integration batch in PR 82. Revisit as a standalone parser only if Command Code is needed. |
+| [76](https://github.com/yigitkonur/cli-continues/pull/76) | Command Code parser | **Superseded by 82** | Command Code came in through the PR 82 parser in v4.6.0. |
 | [73](https://github.com/yigitkonur/cli-continues/pull/73) | Antigravity CLI SQLite sessions | **Adopt after validation** | Potentially useful, but the review identified missing CLI fixture coverage. Add fixtures and verify read-only SQLite access and `agy --conversation` before carrying. |
 | [70](https://github.com/yigitkonur/cli-continues/pull/70) | VS Code Copilot and Mistral Vibe | **Adopt after validation** | Two new parsers in one batch. Split or independently validate storage paths, schema drift, and native resume commands. |
+
+Fork-originated upstream PRs: [93](https://github.com/yigitkonur/cli-continues/pull/93), the deleted-session-folder `ENOENT … chdir` fix shipped in v4.6.0. The DeepSeek Harness (`dsh`) parser is fork-only for now.
 
 ## Closed or historical upstream PRs
 
