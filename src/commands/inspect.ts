@@ -45,6 +45,7 @@ function getSessionFormat(source: string, session?: UnifiedSession): SessionForm
     case 'cursor':
     case 'grok':
     case 'caveman':
+    case 'cmd':
       return 'jsonl';
     case 'antigravity': {
       // Antigravity CLI (agy) stores sessions as JSONL transcripts
@@ -69,6 +70,7 @@ function getSessionFormat(source: string, session?: UnifiedSession): SessionForm
       return 'json';
     case 'crush':
     case 'opencode':
+    case 'devin':
       return 'sqlite';
     case 'copilot':
       return 'yaml';

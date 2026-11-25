@@ -31,12 +31,10 @@ export interface HandoffContextOptions {
 export function configuredToolArgs(tool: SessionSource): string[] {
   // ponytail: whitespace split, no quoting; add a shell-words parser if someone needs spaces inside an arg
   const variable = `CONTINUES_${tool.toUpperCase().replace(/-/g, '_')}_ARGS`;
-  const raw =
-    process.env[variable]?.trim() || (tool === 'antigravity' ? process.env.CONTINUES_AGY_ARGS?.trim() : undefined);
-  const activeVar =
-    !process.env[variable]?.trim() && tool === 'antigravity' && process.env.CONTINUES_AGY_ARGS?.trim()
-      ? 'CONTINUES_AGY_ARGS'
-      : variable;
+  const aliasVar =
+    tool === 'antigravity' ? 'CONTINUES_AGY_ARGS' : tool === 'cmd' ? 'CONTINUES_COMMANDCODE_ARGS' : undefined;
+  const raw = process.env[variable]?.trim() || (aliasVar ? process.env[aliasVar]?.trim() : undefined);
+  const activeVar = !process.env[variable]?.trim() && aliasVar && process.env[aliasVar]?.trim() ? aliasVar : variable;
   // Windows shims run through cmd.exe even when spawn receives an argv array.
   // Reject operators, expansion, quoting, and command separators, without
   // echoing the value (which may contain private paths or credentials).
