@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.6.0] - 2026-11-25
+
+### Added
+
+- **Devin CLI session support** — the new `devin` source reads Devin CLI
+  sessions from `~/.local/share/devin/cli/sessions.db` (SQLite, opened
+  read-only; also the `cli-next` channel and `$DEVIN_CLI_HOME`), walks the
+  `message_nodes` tree from `main_chain_id`, pairs tool results by
+  `tool_call_id`, and extracts messages, tool activity, `apply_patch` file
+  changes, thinking highlights, the model and token usage. Native resume runs
+  `devin -r <id>`; handoffs start `devin -- <prompt>`. Adopted from upstream
+  PR #82 and checked against Devin CLI 3000.14.
+- **Command Code session support** — the new `cmd` source (aliases
+  `commandcode`, `command-code`) reads `~/.commandcode/projects/<slug>/*.jsonl`
+  plus the `.meta.json` sidecar titles, including the top-level `model`/`usage`
+  records written by Command Code 1.93. Native resume runs
+  `commandcode --resume <id>`; the binary is `commandcode` first so Windows
+  never launches `cmd.exe`. Adopted from upstream PR #82.
+- **DeepSeek Harness session support** — the new `dsh` source reads
+  `dsh-tui` sessions from `~/.dsh/sessions/<cwd-slug>/<id>/session.v4.jsonl.zstd`
+  (`$DSH_HOME` honoured; zstd needs Node 22.15+, older Node skips them), with
+  titles and models from `~/.dsh-tui/session-index.json`, tool calls, compaction
+  summaries and todos. Native resume runs `dsh-tui --resume <id>`; handoffs
+  start `dsh-tui -- <prompt>`.
+
+### Fixed
+
+- **Resuming a session whose folder was deleted** — native resume and
+  handoffs crashed with `ENOENT … chdir` when the session's cwd no longer
+  existed (old `/tmp` probes, removed worktrees). They now launch in the
+  current directory and print one warning.
+
 ## [4.5.0] - 2026-11-13
 
 ### Added
